@@ -1,4 +1,4 @@
-package brft
+package main
 
 func main() {
 
