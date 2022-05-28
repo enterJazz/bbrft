@@ -21,7 +21,7 @@ func (m *Data) Unmarshal([]byte) error {
 	return nil
 }
 
-func (m *Data) GetLength(io.Reader) int64 {
+func (m *Data) GetLength(io.Reader) int {
 	// TODO: Read the length from the reader
 	return 0
 }
