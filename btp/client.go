@@ -2,6 +2,7 @@ package btp
 
 import (
 	"net"
+	"time"
 
 	"gitlab.lrz.de/brft/btp/congestioncontrol"
 )
@@ -16,7 +17,7 @@ type Client struct {
 func NewClient(
 	conn *net.UDPConn,
 	cc congestioncontrol.CongestionControlAlgorithm,
-) *Client {
+) net.Conn {
 	return &Client{
 		conn: conn,
 		cc:   cc,
@@ -38,14 +39,26 @@ func (c *Client) Write(b []byte) (int, error) {
 	return 0, nil
 }
 
-func (c *Client) LocalAddr() Addr {
+func (c *Client) LocalAddr() net.Addr {
 	// TODO: implement
 	return Addr{}
 }
 
-func (c *Client) RemoteAddr() Addr {
+func (c *Client) RemoteAddr() net.Addr {
 	// TODO: implement
 	return Addr{}
+}
+
+func (c *Client) SetDeadline(t time.Time) error {
+	return c.conn.SetDeadline(t)
+}
+
+func (c *Client) SetReadDeadline(t time.Time) error {
+	return c.conn.SetReadDeadline(t)
+}
+
+func (c *Client) SetWriteDeadline(t time.Time) error {
+	return c.conn.SetWriteDeadline(t)
 }
 
 // TODO: Other potentially interesting methods
