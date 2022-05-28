@@ -4,4 +4,6 @@ type CongestionControlAlgorithm interface {
 	SentMessages(int)
 	ReceivedAcks(int)
 	NumFreeSend() int
+
+	Name() string
 }

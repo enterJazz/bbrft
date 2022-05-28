@@ -1,27 +1,81 @@
 package btp
 
 import (
+	"io"
 	"net"
 	"time"
 
 	"gitlab.lrz.de/brft/btp/congestioncontrol"
+	"gitlab.lrz.de/brft/log"
+	"go.uber.org/zap"
 )
+
+type ClientOptions struct {
+	// The maximum number of bytes to send in a single packet.
+	MaxPacketSize uint16
+
+	CC congestioncontrol.CongestionControlAlgorithm
+
+	Version ProtocolVersion
+}
 
 // Probably a client for each connection
 type Client struct {
+	l    *zap.Logger
 	conn *net.UDPConn
-	cc   congestioncontrol.CongestionControlAlgorithm
 	// TODO: add state that the client needs
+	options *ClientOptions
+}
+
+func NewDefaultClientOptions(l *zap.Logger) *ClientOptions {
+	return &ClientOptions{
+		MaxPacketSize: 1024,
+		CC:            congestioncontrol.NewLockStepAlgorithm(l),
+	}
 }
 
 func NewClient(
+	l *zap.Logger,
 	conn *net.UDPConn,
-	cc congestioncontrol.CongestionControlAlgorithm,
+	options *ClientOptions,
 ) net.Conn {
-	return &Client{
-		conn: conn,
-		cc:   cc,
+	if options == nil {
+		options = NewDefaultClientOptions(l)
 	}
+
+	return &Client{
+		conn:    conn,
+		l:       l.With(log.FPeer("client")),
+		options: options,
+	}
+}
+
+func (c *Client) GetOptions() *ClientOptions {
+	return c.options
+}
+
+// connects to the server specified in the initial setup
+func (c *Client) Connect() error {
+	connMsg := &Conn{
+		PacketHeader: PacketHeader{
+			ProtocolType: c.options.Version,
+			MessageType:  MessageTypeConn,
+		},
+	}
+	buf, err := connMsg.Marshal()
+	if err != nil {
+		return err
+	}
+
+	n, err := c.Write(buf)
+	if err != nil {
+		return err
+	}
+	if n != len(buf) {
+		return io.ErrShortWrite
+	}
+
+	return nil
 }
 
 func (c *Client) Close() error {

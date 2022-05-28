@@ -23,6 +23,10 @@ func NewLockStepAlgorithm(l *zap.Logger) *LockStepAlgorithm {
 	}
 }
 
+func (l *LockStepAlgorithm) Name() string {
+	return "lock_step"
+}
+
 func (l *LockStepAlgorithm) SentMessages(i int) {
 	if i > 1 {
 		l.l.Warn("client send misbehaviour - more messages sent than allowed",

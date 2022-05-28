@@ -1,6 +1,8 @@
 package log
 
 import (
+	"net"
+
 	"go.uber.org/zap"
 )
 
@@ -15,4 +17,8 @@ func FPeer(peer string) zap.Field {
 
 func FComponent(component string) zap.Field {
 	return zap.String(FComponentKey, component)
+}
+
+func FAddr(addr net.Addr) zap.Field {
+	return zap.String("addr", addr.String())
 }
