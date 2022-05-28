@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"gitlab.lrz.de/brft/brft/shared"
+	"gitlab.lrz.de/brft/brft/common"
 )
 
 var fileSignature = []byte{42, 52, 46, 54, 31} // "BRFT1" i.e. BRFT file version 1
@@ -42,7 +42,7 @@ func NewFile(
 	}
 
 	// compute the checksum
-	checksum, err := shared.ComputeChecksum(f)
+	checksum, err := common.ComputeChecksum(f)
 	if err != nil {
 		return nil, fmt.Errorf("unable to compute checksum: %w", err)
 	}

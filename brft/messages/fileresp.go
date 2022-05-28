@@ -7,8 +7,6 @@ type FileRespStatusCode uint8
 const (
 	FileRespStatusCodeUndefined FileRespStatusCode = iota
 	FileRespStatusCodeOk
-	FileRespStatusCodeResumeNoChecksum
-	FileRespStatusCodeFileNotFound
 	FileRespStatusCodeFileChanged
 	// ...
 )
@@ -35,6 +33,6 @@ func (m *FileResp) Unmarshal([]byte) error {
 	return nil
 }
 
-func (m *FileResp) GetLength(io.Reader) int64 {
+func (m *FileResp) GetLength(io.Reader) int {
 	return 11
 }

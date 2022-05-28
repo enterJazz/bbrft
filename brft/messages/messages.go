@@ -9,7 +9,7 @@ import "io"
 type BRFTMessage interface {
 	Marshal() ([]byte, error)
 	Unmarshal([]byte) error
-	GetLength(io.Reader) int64
+	GetLength(io.Reader) int
 }
 
 // ProcolType defines the protocol type of the packet

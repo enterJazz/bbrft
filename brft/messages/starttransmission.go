@@ -21,6 +21,6 @@ func (m *StartTransmission) Unmarshal([]byte) error {
 	return nil
 }
 
-func (m *StartTransmission) GetLength(io.Reader) int64 {
+func (m *StartTransmission) GetLength(io.Reader) int {
 	return 10
 }

@@ -10,7 +10,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"gitlab.lrz.de/brft/brft/shared"
+	"gitlab.lrz.de/brft/brft/common"
+	shared "gitlab.lrz.de/brft/brft/common"
 	"gitlab.lrz.de/brft/log"
 	"go.uber.org/zap"
 )
@@ -120,10 +121,10 @@ func (f *File) CheckChecksum([]byte) (bool, error) {
 	// reset the offset at the end
 	defer f.f.Seek(prevOffset, io.SeekStart)
 
-	offset := int64(len(fileSignature) + shared.ChecksumSize - 1)
+	offset := int64(len(fileSignature) + common.ChecksumSize - 1)
 	f.f.Seek(offset, io.SeekStart)
 
-	if checksum, err := shared.ComputeChecksum(f.f); err != nil {
+	if checksum, err := common.ComputeChecksum(f.f); err != nil {
 		return false, err
 	} else if bytes.Compare(checksum, f.checksum) != 0 {
 		return false, nil
