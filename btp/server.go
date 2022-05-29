@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"gitlab.lrz.de/brft/btp/congestioncontrol"
+	"gitlab.lrz.de/brft/btp/messages"
 	"gitlab.lrz.de/brft/log"
 	"go.uber.org/zap"
 )
@@ -103,29 +104,21 @@ func (s *Server) Listen() error {
 	}
 
 	for {
-		buf := make([]byte, HeaderSize)
-		rlen, remote, err := s.conn.ReadFromUDP(buf)
-
+		h, addr, err := messages.ReadHeaderFrom(s.conn)
 		if err != nil {
-			s.l.Error("error reading", zap.Error(err))
+			s.l.Error("error parsing header", log.FAddr(addr), zap.Error(err))
 			continue
 		}
 
-		l := s.l.With(log.FAddr(remote), zap.Int("length", rlen))
+		l := s.l.With(log.FAddr(addr), FHeaderProtocolVersion(h.ProtocolType), FHeaderMessageType(h.MessageType))
 		l.Debug("received udp frame")
 
-		h, err := ParseHeader(buf)
-		if err != nil {
-			l.Error("error parsing header", zap.Error(err))
-			continue
-		}
-
 		// TODO: define message type fields
-		s.l.Debug("received header", FHeaderProtocolVersion(h.ProtocolType), FHeaderMessageType(h.MessageType))
+		s.l.Debug("received header")
 
 		switch h.MessageType {
-		case MessageTypeConn:
-			var c Conn
+		case messages.MessageTypeConn:
+			var c messages.Conn
 			err = c.Unmarshal(h, s.conn)
 
 			if err != nil {
@@ -146,7 +139,7 @@ func (s *Server) Listen() error {
 				},
 			}
 
-			s.setConnection(remote, conn)
+			s.setConnection(addr, conn)
 
 			s.l.Debug("received connection request")
 

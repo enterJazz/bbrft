@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gitlab.lrz.de/brft/btp/congestioncontrol"
+	"gitlab.lrz.de/brft/btp/messages"
 	"gitlab.lrz.de/brft/log"
 	"go.uber.org/zap"
 )
@@ -16,7 +17,7 @@ type ClientOptions struct {
 
 	CC congestioncontrol.CongestionControlAlgorithm
 
-	Version ProtocolVersion
+	Version messages.ProtocolVersion
 }
 
 // Probably a client for each connection
@@ -56,10 +57,10 @@ func (c *Client) GetOptions() *ClientOptions {
 
 // connects to the server specified in the initial setup
 func (c *Client) Connect() error {
-	connMsg := &Conn{
-		PacketHeader: PacketHeader{
+	connMsg := &messages.Conn{
+		PacketHeader: messages.PacketHeader{
 			ProtocolType: c.options.Version,
-			MessageType:  MessageTypeConn,
+			MessageType:  messages.MessageTypeConn,
 		},
 	}
 	buf, err := connMsg.Marshal()
