@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"gitlab.lrz.de/brft/brft/common"
+	"gitlab.lrz.de/bbrft/brft/common"
 )
 
 var fileSignature = []byte{42, 52, 46, 54, 31} // "BRFT1" i.e. BRFT file version 1

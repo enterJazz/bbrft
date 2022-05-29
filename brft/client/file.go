@@ -10,9 +10,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"gitlab.lrz.de/brft/brft/common"
-	shared "gitlab.lrz.de/brft/brft/common"
-	"gitlab.lrz.de/brft/log"
+	"gitlab.lrz.de/bbrft/brft/common"
+	shared "gitlab.lrz.de/bbrft/brft/common"
+	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
 

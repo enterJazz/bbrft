@@ -4,9 +4,9 @@ import (
 	"errors"
 	"net"
 
-	"gitlab.lrz.de/brft/btp/congestioncontrol"
-	"gitlab.lrz.de/brft/btp/messages"
-	"gitlab.lrz.de/brft/log"
+	"gitlab.lrz.de/bbrft/btp/congestioncontrol"
+	"gitlab.lrz.de/bbrft/btp/messages"
+	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
 

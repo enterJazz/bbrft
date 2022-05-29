@@ -1,8 +1,8 @@
 package client
 
 import (
-	"gitlab.lrz.de/brft/btp"
-	"gitlab.lrz.de/brft/log"
+	"gitlab.lrz.de/bbrft/btp"
+	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
 

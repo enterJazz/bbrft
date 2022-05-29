@@ -7,7 +7,7 @@ import (
 
 	"crypto/sha256"
 
-	"gitlab.lrz.de/brft/brft/common"
+	"gitlab.lrz.de/bbrft/brft/common"
 	"golang.org/x/crypto/cryptobyte"
 )
 
