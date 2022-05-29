@@ -1,4 +1,4 @@
-module gitlab.lrz.de/brft
+module gitlab.lrz.de/bbrft
 
 go 1.18
 
