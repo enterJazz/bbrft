@@ -11,7 +11,7 @@ type Data struct {
 	PacketHeader
 	Flags uint8
 
-	// should not be larger 1472 to not cause MTU
+	// should not be larger 1472-HeaderSize+F64`lags to not cause MTU
 	Payload []byte
 
 	Raw []byte
@@ -33,8 +33,8 @@ func (p *Data) Marshal() ([]byte, error) {
 		return nil, NewEncodeError("payload too large")
 	}
 
-	b.AddUint8(p.Flags)
 	b.AddUint16(uint16(len(p.Payload)))
+	b.AddUint8(p.Flags)
 	b.AddBytes(p.Payload)
 	return b.Bytes()
 }
@@ -59,7 +59,6 @@ func (p *Data) Unmarshal(h PacketHeader, r io.Reader) error {
 	}
 
 	var length uint16
-
 	ok = b.ReadUint16(&length)
 	if !ok {
 		return NewDecodeError("length")

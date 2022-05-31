@@ -29,7 +29,7 @@ const (
 )
 
 const (
-	HeaderSize = 3
+	HeaderSize = 4
 
 	// packet sizes without header
 	AckSize     = 2
@@ -50,6 +50,11 @@ type Codable interface {
 	GetHeader() PacketHeader
 }
 
+// 0                   1                   2                   3
+// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |  Version+Type |             SeqNr             |    Reserved   |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 type PacketHeader struct {
 	// ProtocolVersion(3bit) + MessageType(5bit)
 	// will be encoded as
@@ -61,6 +66,8 @@ type PacketHeader struct {
 
 	// acked packet sequence number
 	SeqNr uint16
+
+	Reserverd uint8
 }
 
 // reads in the entire message from a io.Reader
@@ -92,6 +99,8 @@ func marshalHeader(b *cryptobyte.Builder, h PacketHeader) {
 	t := uint8(h.ProtocolType) | uint8(h.MessageType)
 	b.AddUint8(t)
 	b.AddUint16(h.SeqNr)
+	// reserved
+	b.AddUint8(0)
 }
 
 func ReadHeader(r io.Reader) (h PacketHeader, err error) {
@@ -108,24 +117,6 @@ func ReadHeader(r io.Reader) (h PacketHeader, err error) {
 	}
 
 	return ParseHeader(buf)
-}
-
-func ReadHeaderFrom(r net.PacketConn) (h PacketHeader, addr net.Addr, err error) {
-	buf := make([]byte, HeaderSize)
-	n, addr, err := r.ReadFrom(buf)
-
-	if err != nil {
-		return
-	}
-
-	if n != HeaderSize {
-		err = io.ErrUnexpectedEOF
-		return
-	}
-
-	h, err = ParseHeader(buf)
-
-	return
 }
 
 func ParseHeader(buf []byte) (h PacketHeader, err error) {
@@ -147,6 +138,24 @@ func ParseHeader(buf []byte) (h PacketHeader, err error) {
 		err = errors.New("failed to read sequence number")
 		return
 	}
+
+	return
+}
+
+func ReadHeaderFrom(r net.PacketConn) (h PacketHeader, addr net.Addr, err error) {
+	buf := make([]byte, HeaderSize)
+	n, addr, err := r.ReadFrom(buf)
+
+	if err != nil {
+		return
+	}
+
+	if n != HeaderSize {
+		err = io.ErrUnexpectedEOF
+		return
+	}
+
+	h, err = ParseHeader(buf)
 
 	return
 }

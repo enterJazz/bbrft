@@ -16,7 +16,7 @@ type ServerOptions struct {
 
 	CC congestioncontrol.CongestionControlAlgorithm
 
-	Version ProtocolVersion
+	Version messages.ProtocolVersion
 }
 
 type ServerConnectionOptions struct {
@@ -25,7 +25,7 @@ type ServerConnectionOptions struct {
 
 	CC congestioncontrol.CongestionControlAlgorithm
 
-	Version ProtocolVersion
+	Version messages.ProtocolVersion
 }
 
 type Connection struct {

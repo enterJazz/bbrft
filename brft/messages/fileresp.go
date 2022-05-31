@@ -13,11 +13,11 @@ const (
 
 type FileResp struct {
 	PacketHeader
-	// Checksum of the file the server offers for download. TODO: Maybe mutiple?
-	Checksum   uint64 // TODO: How long?!
-	StreamID   uint16
-	FileSize   uint64
 	StatusCode FileRespStatusCode
+	// Checksum of the file the server offers for download. TODO: Maybe mutiple?
+	Checksum uint64 // TODO: How long?!
+	StreamID uint16
+	FileSize uint64
 
 	// TODO: Maybe add a mechanism for the compression algorithms - would have to include a header length in that case as well
 
