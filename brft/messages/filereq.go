@@ -36,8 +36,8 @@ func (flags FileReqFlags) IsSet(flag FileReqFlag) bool {
 type FileReq struct {
 	// NOTE: The whole message has to be length delimeted in order to know how many bytes the receiver is supposed to read
 
-	// Filename of the requested file, can be at most 255 characters long
-	Filename string
+	// FileName of the requested file, can be at most 255 characters long
+	FileName string
 	Flags    FileReqFlags
 	// Checksum is the checksum of a previous partial download. If the
 	// FileReqFlagResumption is set, the checksum also has to be set. In that case the checksum must be exactly of the
@@ -45,9 +45,6 @@ type FileReq struct {
 	Checksum []byte
 
 	// TODO: Maybe add a mechanism for the compression algorithms
-
-	// TODO: Currently raw is missing the length of the message when unmarshaled, maybe find a way around this..
-	Raw []byte
 }
 
 const (
@@ -59,12 +56,12 @@ func (m *FileReq) Marshal() ([]byte, error) {
 		return nil, errors.New("invalid checksum length")
 	}
 
-	filename := []byte(m.Filename)
-	if len(filename) > 255 {
+	fileName := []byte(m.FileName)
+	if len(fileName) > 255 {
 		return nil, errors.New("invalid filename")
 	}
 
-	len := baseHeaderLen + len([]byte(filename))
+	len := baseHeaderLen + len([]byte(fileName))
 	if m.Flags.IsSet(FileReqFlagResumption) {
 		len += sha256.Size
 	}
@@ -74,7 +71,7 @@ func (m *FileReq) Marshal() ([]byte, error) {
 	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 		// write the filename
 		b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-			b.AddBytes(filename)
+			b.AddBytes(fileName)
 		})
 
 		// combine the flags
@@ -91,13 +88,11 @@ func (m *FileReq) Marshal() ([]byte, error) {
 		b.AddBytes(m.Checksum)
 	})
 
-	var err error
-	m.Raw, err = b.Bytes()
-	return m.Raw, err
+	raw, err := b.Bytes()
+	return raw, err
 }
 
 func (m *FileReq) Unmarshal(data []byte) error {
-	*m = FileReq{Raw: data}
 	s := cryptobyte.String(data)
 
 	// read the filename
@@ -105,7 +100,7 @@ func (m *FileReq) Unmarshal(data []byte) error {
 	if !s.ReadUint8LengthPrefixed(&fileName) {
 		return ErrReadFailed
 	}
-	m.Filename = string(fileName)
+	m.FileName = string(fileName)
 
 	// read the flags
 	var joinedFlags uint8

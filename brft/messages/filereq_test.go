@@ -19,7 +19,7 @@ func TestMarshalUnmarshal(t *testing.T) {
 	}{
 		// TODO: Add test cases.
 		{"valid-1", FileReq{
-			Filename: "some-filename",
+			FileName: "some-filename",
 			Flags:    nil,
 			Checksum: nil,
 		}, false, false},
@@ -59,9 +59,6 @@ func TestMarshalUnmarshal(t *testing.T) {
 				t.Errorf("FileReq.Marshal() error = %v, wantErr %v", err, tt.wantErrMarshal)
 				return
 			}
-
-			// Strip the length
-			tt.m.Raw = tt.m.Raw[2:]
 
 			// compare the input and output
 			if !reflect.DeepEqual(*m, tt.m) {
