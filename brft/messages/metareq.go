@@ -20,8 +20,6 @@ func NewMetaReq(fileName string) (*MetaReq, error) {
 	}, nil
 }
 
-// TODO: Move checks into the New* function in order to later be able to use
-// this function to test the server with invalid input
 func (m *MetaReq) Marshal() ([]byte, error) {
 	fileName := []byte(m.FileName)
 	if len(fileName) > 255 {
