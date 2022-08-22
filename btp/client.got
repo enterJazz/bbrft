@@ -84,16 +84,6 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) Read(b []byte) (int, error) {
-	// TODO: implement
-	return 0, nil
-}
-
-func (c *Client) Write(b []byte) (int, error) {
-	// TODO: implement
-	return 0, nil
-}
-
 func (c *Client) LocalAddr() net.Addr {
 	// TODO: implement
 	return Addr{}

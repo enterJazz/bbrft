@@ -3,7 +3,6 @@ package messages
 import (
 	"errors"
 	"io"
-	"net"
 
 	"golang.org/x/crypto/cryptobyte"
 )
@@ -138,24 +137,6 @@ func ParseHeader(buf []byte) (h PacketHeader, err error) {
 		err = errors.New("failed to read sequence number")
 		return
 	}
-
-	return
-}
-
-func ReadHeaderFrom(r net.PacketConn) (h PacketHeader, addr net.Addr, err error) {
-	buf := make([]byte, HeaderSize)
-	n, addr, err := r.ReadFrom(buf)
-
-	if err != nil {
-		return
-	}
-
-	if n != HeaderSize {
-		err = io.ErrUnexpectedEOF
-		return
-	}
-
-	h, err = ParseHeader(buf)
 
 	return
 }

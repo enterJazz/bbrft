@@ -9,8 +9,13 @@ import (
 type ConnAck struct {
 	PacketHeader
 
+	ServerSeqNr uint16
+
 	// packet size selected by server
 	ActualPacketSize uint16
+
+	ActualInitCwndSize uint8
+	ActualMaxCwndSize  uint8
 
 	Raw []byte
 }
@@ -45,9 +50,24 @@ func (p *ConnAck) Unmarshal(h PacketHeader, r io.Reader) error {
 	p.PacketHeader = h
 	b := cryptobyte.String(buf)
 
-	ok := b.ReadUint16(&p.ActualPacketSize)
+	ok := b.ReadUint16(&p.ServerSeqNr)
+	if !ok {
+		return NewDecodeError("ServerSeqNr")
+	}
+
+	ok = b.ReadUint16(&p.ActualPacketSize)
 	if !ok {
 		return NewDecodeError("ActualPacketSize")
+	}
+
+	ok = b.ReadUint8(&p.ActualInitCwndSize)
+	if !ok {
+		return NewDecodeError("ActualInitCwndSize")
+	}
+
+	ok = b.ReadUint8(&p.ActualMaxCwndSize)
+	if !ok {
+		return NewDecodeError("ActualMaxCwndSize")
 	}
 
 	return nil
