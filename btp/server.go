@@ -28,7 +28,7 @@ type ServerConnectionOptions struct {
 	Version messages.ProtocolVersion
 }
 
-type Connection struct {
+type Conn struct {
 	conn   net.Conn
 	Config *ServerConnectionOptions
 }
@@ -41,7 +41,7 @@ type Server struct {
 	conn    *net.UDPConn
 
 	// map of clients to udp connections
-	conns map[string]Connection
+	conns map[string]Conn
 }
 
 func NewDefaultServerOptions(l *zap.Logger) *ServerOptions {
@@ -62,7 +62,7 @@ func NewServer(
 	}
 
 	return &Server{
-		conns: map[string]Connection{},
+		conns: map[string]Conn{},
 		l: l.With(log.FPeer("server")).
 			With(log.FAddr(conn.LocalAddr())).
 			With(zap.Uint8("version", uint8(options.Version))).
@@ -76,7 +76,7 @@ func (s *Server) GetOptions() *ServerOptions {
 	return s.options
 }
 
-func (s *Server) GetConnection(addr net.Addr) *Connection {
+func (s *Server) GetConnection(addr net.Addr) *Conn {
 	if val, ok := s.conns[addr.String()]; ok {
 		return &val
 	}
@@ -84,7 +84,7 @@ func (s *Server) GetConnection(addr net.Addr) *Connection {
 	return nil
 }
 
-func (s *Server) setConnection(addr net.Addr, conn *Connection) {
+func (s *Server) setConnection(addr net.Addr, conn *Conn) {
 	s.conns[addr.String()] = *conn
 }
 
@@ -93,7 +93,7 @@ func (s *Server) removeConnection(addr net.Addr) {
 	delete(s.conns, addr.String())
 }
 
-func (c *Connection) Write(b []byte) (int, error) {
+func (c *Conn) Write(b []byte) (int, error) {
 	return c.conn.Write(b)
 }
 
@@ -133,7 +133,7 @@ func (s *Server) Listen() error {
 			}
 
 			// create new connection
-			conn := &Connection{
+			conn := &Conn{
 				Config: &ServerConnectionOptions{
 					MaxPacketSize: maxPacketSize,
 				},

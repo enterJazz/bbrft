@@ -1,6 +1,7 @@
 package client
 
 import (
+	"gitlab.lrz.de/bbrft/brft/compression"
 	"gitlab.lrz.de/bbrft/btp"
 	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
@@ -10,8 +11,13 @@ import (
 type Client struct {
 	l *zap.Logger
 	c *btp.Client
-
 	// TODO: add state that the client needs
+
+	// initialized during the handshake
+	compressor compression.Compressor
+
+	// initialized during the handshake
+	chunkSize int
 }
 
 func NewClient(

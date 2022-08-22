@@ -12,7 +12,7 @@ func TestServer_Listen(t *testing.T) {
 		l       *zap.Logger
 		options *ServerOptions
 		conn    *net.UDPConn
-		conns   map[string]Connection
+		conns   map[string]Conn
 	}
 	tests := []struct {
 		name    string
