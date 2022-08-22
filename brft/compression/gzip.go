@@ -1,10 +1,17 @@
 package compression
 
+import "go.uber.org/zap"
+
 type GzipCompressor struct {
+	l *zap.Logger
 }
 
-func NewGzipCompressor() *GzipCompressor {
-	return &GzipCompressor{}
+func NewGzipCompressor(
+	l *zap.Logger,
+) *GzipCompressor {
+	return &GzipCompressor{
+		l: l,
+	}
 }
 
 func (c *GzipCompressor) Compress(chunk []byte) ([]byte, error) {
