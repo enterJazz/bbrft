@@ -9,11 +9,9 @@ import (
 type CloseResons uint8
 
 const (
-	CloseResonsConn    CloseResons = iota + 1
-	CloseResonsConnAck CloseResons = iota + 1
-	CloseResonsAck     CloseResons = iota + 1
-	CloseResonsData    CloseResons = iota + 1
-	CloseResonsClose   CloseResons = iota + 1
+	CloseResonsDisconnect CloseResons = iota + 1
+	CloseReasonBadRequest
+	CloseResonsTimeout
 )
 
 type Close struct {
