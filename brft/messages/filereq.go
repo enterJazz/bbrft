@@ -36,15 +36,16 @@ func (flags FileReqFlags) IsSet(flag FileReqFlag) bool {
 type FileReq struct {
 	// NOTE: The whole message has to be length delimeted in order to know how many bytes the receiver is supposed to read
 
+	Flags FileReqFlags
+
+	// OptionalHeaders for the upcomming file transfer
+	OptHeaders OptionalHeaders
 	// FileName of the requested file, can be at most 255 characters long
 	FileName string
-	Flags    FileReqFlags
 	// Checksum is the checksum of a previous partial download. If the
 	// FileReqFlagResumption is set, the checksum also has to be set. In that case the checksum must be exactly of the
 	// size of our checksum Algorithm (currently SHA256 -> 32 Byte)
 	Checksum []byte
-
-	// TODO: Maybe add a mechanism for the compression algorithms
 }
 
 const (
@@ -61,11 +62,11 @@ func (m *FileReq) Marshal() ([]byte, error) {
 		return nil, errors.New("invalid filename")
 	}
 
-	len := baseHeaderLen + len([]byte(fileName))
+	outLen := baseHeaderLen + len([]byte(fileName))
 	if m.Flags.IsSet(FileReqFlagResumption) {
-		len += sha256.Size
+		outLen += sha256.Size
 	}
-	b := cryptobyte.NewFixedBuilder(make([]byte, 0, len))
+	b := cryptobyte.NewFixedBuilder(make([]byte, 0, outLen))
 
 	// write the whole header length
 	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
@@ -92,22 +93,20 @@ func (m *FileReq) Marshal() ([]byte, error) {
 	return raw, err
 }
 
-func (m *FileReq) Unmarshal(data []byte) error {
-	s := cryptobyte.String(data)
+// TODO: Make sure the read has a deadline before calling this function
+func (m *FileReq) Read(r io.Reader) error {
+	// TODO: hand over the cyberbyte.String instead. This way we can easily
+	//		adapt the timeout when the RTT changes
 
-	// read the filename
-	var fileName cryptobyte.String
-	if !s.ReadUint8LengthPrefixed(&fileName) {
-		return ErrReadFailed
-	}
-	m.FileName = string(fileName)
+	s := cyberbyte.NewString(r, cyberbyte.DefaultTimeout)
 
 	// read the flags
 	var joinedFlags uint8
-	if !s.ReadUint8(&joinedFlags) {
-		return ErrReadFailed
+	if err := s.ReadUint8(&joinedFlags); err != nil {
+		return fmt.Errorf("unable to read flags: %w", err)
 	}
 
+	// convert the joined flags into a slice
 	for _, f := range AllFileReqFlag {
 		if joinedFlags&uint8(f) > 0 {
 			m.Flags = append(m.Flags, f)
@@ -116,9 +115,27 @@ func (m *FileReq) Unmarshal(data []byte) error {
 		}
 	}
 
+	// make sure all flags have been recognized
 	if joinedFlags > 0 {
 		return fmt.Errorf("%w: %X", ErrInvalidFlag, byte(joinedFlags))
 	}
+
+	// TODO: read the optional headers
+	err := m.readOptionalHeaders(s)
+	if err != nil {
+		return fmt.Errorf("unable to read optional headers: %w", err)
+	}
+
+	// TODO: read the filename length
+
+	// TODO: read an parse the filename and checksum
+
+	// read the filename
+	var fileName cryptobyte.String
+	if !s.ReadUint8LengthPrefixed(&fileName) {
+		return ErrReadFailed
+	}
+	m.FileName = string(fileName)
 
 	// potentially read the checksum
 	if m.Flags.IsSet(FileReqFlagResumption) {
@@ -134,6 +151,49 @@ func (m *FileReq) Unmarshal(data []byte) error {
 	}
 
 	return nil
+}
+
+func (m *FileReq) readOptionalHeaders(s cyberbyte.String) error {
+	// get the number of the optional headers
+	var numHeaders uint8
+	if err := s.ReadUint8(&numHeaders); err != nil {
+		return err
+	}
+
+	headers := make(OptionalHeaders, 0, numHeaders)
+	for n := 0; n < numHeaders; n++ {
+
+		// read the length & type
+		var length, optType uint8
+		if err := s.ReadUint8(&length); err != nil {
+			return err
+		}
+		if err := s.ReadUint8(&optType); err != nil {
+			return err
+		}
+
+		// check whether the type is known
+		var header OptionalHeader
+		switch optType {
+		case OptionalHeaderTypeReserved:
+			// TODO: probably just log
+			return errors.New("received reserved optional header")
+		case OptionalHeaderTypeCompressionReq:
+			// TODO: Parse the header
+		case OptionalHeaderTypeCompressionResp:
+			// TODO: this should be an error as it is only allowed in reponses, not requests - figure out how to handle (custom error/boolean/custom optional header type)
+			// TODO: log somewhere
+
+		default:
+			// TODO: log somewhere
+			header = UnknownOptionalHeader{
+				Length: length,
+				Type:   optType,
+			}
+		}
+		headers = append(headers, header)
+	}
+
 }
 
 func (m *FileReq) GetLength(r io.Reader) (int, error) {
