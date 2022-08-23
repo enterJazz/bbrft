@@ -3,8 +3,9 @@ package compression
 import (
 	"bytes"
 	"compress/gzip"
-	"go.uber.org/zap"
 	"io"
+
+	"go.uber.org/zap"
 )
 
 type GzipCompressor struct {
@@ -23,15 +24,16 @@ func (c *GzipCompressor) Compress(chunk []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	reader := bytes.NewReader(chunk)
 	zw := gzip.NewWriter(&buf)
-	defer func() {
-		if err := zw.Close(); err != nil {
-			c.l.Error(err.Error())
-		}
-	}()
+
 	_, err := io.Copy(zw, reader)
 	if err != nil {
 		return nil, err
 	}
+
+	if err := zw.Close(); err != nil {
+		c.l.Error(err.Error())
+	}
+
 	return buf.Bytes(), err
 }
 func (c *GzipCompressor) Decompress(chunk []byte) ([]byte, error) {
@@ -42,15 +44,15 @@ func (c *GzipCompressor) Decompress(chunk []byte) ([]byte, error) {
 		c.l.Error(err.Error())
 		return nil, err
 	}
-	defer func() {
-		if err := zr.Close(); err != nil {
-			c.l.Error(err.Error())
-		}
-	}()
 
 	if _, err = io.Copy(&buf, zr); err != nil {
 		c.l.Error(err.Error())
 		return nil, err
 	}
+
+	if err := zr.Close(); err != nil {
+		c.l.Error(err.Error())
+	}
+
 	return buf.Bytes(), err
 }

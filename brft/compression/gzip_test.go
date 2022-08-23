@@ -2,8 +2,9 @@ package compression
 
 import (
 	"bytes"
-	"go.uber.org/zap"
 	"testing"
+
+	"go.uber.org/zap"
 )
 
 func TestDeCompress(t *testing.T) {
