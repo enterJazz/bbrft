@@ -34,6 +34,8 @@ func (p *ConnAck) Marshal() ([]byte, error) {
 
 	// packet encoding after header
 	b.AddUint16(p.ActualPacketSize)
+	b.AddUint8(p.ActualInitCwndSize)
+	b.AddUint8(p.ActualMaxCwndSize)
 	return b.Bytes()
 }
 

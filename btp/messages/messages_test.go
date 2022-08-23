@@ -23,8 +23,27 @@ func Test_Coding(t *testing.T) {
 					MessageType:  MessageTypeConn,
 					SeqNr:        3,
 				},
-				MaxPacketSize: 1024,
+				InitCwndSize:  10,
+				MaxCwndSize:   100,
+				MaxPacketSize: 1000,
 			},
+			wantDecodeError: false,
+			wantEncodeError: false,
+		},
+		{
+			name: "connAck",
+			message: &ConnAck{
+				PacketHeader: PacketHeader{
+					ProtocolType: ProtocolVersionBTPv1,
+					MessageType:  MessageTypeConnAck,
+					SeqNr:        3,
+				},
+				ActualPacketSize:   10,
+				ActualInitCwndSize: 100,
+				ActualMaxCwndSize:  255,
+			},
+			wantDecodeError: false,
+			wantEncodeError: false,
 		},
 		{
 			name: "data",
@@ -115,24 +134,29 @@ func Test_Coding(t *testing.T) {
 			}
 
 			var decoded Codable
-
+			var name string
 			switch h.MessageType {
 			case MessageTypeConn:
 				decoded = &Conn{}
+				name = "Conn"
 			case MessageTypeAck:
 				decoded = &Ack{}
+				name = "Ack"
 			case MessageTypeClose:
 				decoded = &Close{}
+				name = "Close"
 			case MessageTypeData:
 				decoded = &Data{}
+				name = "Data"
 			case MessageTypeConnAck:
 				decoded = &ConnAck{}
+				name = "ConnAck"
 			default:
 				t.Fatalf("unknown message type: %d", h.MessageType)
 			}
 
 			if err := decoded.Unmarshal(h, r); (err != nil) != tt.wantDecodeError {
-				t.Errorf("Conn.Unmarshal() error = %v, wantErr %v", err, tt.wantDecodeError)
+				t.Errorf(name+".Unmarshal() error = %v, wantErr %v", err, tt.wantDecodeError)
 			}
 
 			// remove buffer since it must not be equal

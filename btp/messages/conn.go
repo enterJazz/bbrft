@@ -31,6 +31,9 @@ func (p *Conn) Marshal() ([]byte, error) {
 	b := createPacketBuilder(p)
 
 	b.AddUint16(p.MaxPacketSize)
+	b.AddUint8(p.InitCwndSize)
+	b.AddUint8(p.MaxCwndSize)
+
 	return b.Bytes()
 }
 

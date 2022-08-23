@@ -32,8 +32,8 @@ const (
 
 	// packet sizes without header
 	AckSize     = 2
-	ConnSize    = 2
-	ConnAckSize = 2
+	ConnSize    = 4
+	ConnAckSize = 6
 	CloseSize   = 1
 	DataSize    = 3 // without payload + full size is DataSize + Length
 
