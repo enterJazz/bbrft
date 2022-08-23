@@ -31,7 +31,8 @@ type ConnOptions struct {
 
 func NewDefaultOptions(l *zap.Logger) *ConnOptions {
 	return &ConnOptions{
-		Logger: l,
+		Network: "udp",
+		Logger:  l,
 
 		MaxPacketSize: 1024,
 
@@ -48,6 +49,8 @@ type Conn struct {
 }
 
 type Listener struct {
+	// udp conn used to listen for incomming connection requests
+	conn    *net.UDPConn
 	options *ConnOptions
 	laddr   *net.UDPAddr
 }
@@ -72,7 +75,7 @@ func (c *Conn) send(msg messages.Codable) (n int, err error) {
 
 func (c *Conn) recvHeader() (h messages.PacketHeader, err error) {
 	buf := make([]byte, messages.HeaderSize)
-	n, err := c.conn.ReadFromUDP(buf)
+	n, err := c.conn.Read(buf)
 
 	if err != nil {
 		return
@@ -84,6 +87,35 @@ func (c *Conn) recvHeader() (h messages.PacketHeader, err error) {
 	}
 
 	h, err = messages.ParseHeader(buf)
+	return
+}
+
+func (l *Listener) recvConnFrom() (msg *messages.Conn, addr *net.UDPAddr, err error) {
+	buf := make([]byte, messages.HeaderSize)
+	n, addr, err := l.conn.ReadFromUDP(buf)
+
+	if err != nil {
+		return
+	}
+
+	if n != messages.HeaderSize {
+		err = io.ErrUnexpectedEOF
+		return
+	}
+
+	h, err := messages.ParseHeader(buf)
+	if err != nil {
+		return nil, addr, err
+	}
+
+	// TODO: handle invalid versions currently only skips reading
+	if h.ProtocolType != l.options.Version {
+		// TODO: wlad unify errors
+		return nil, addr, errors.New("received invalid packet version")
+	}
+	msg = &messages.Conn{}
+	err = msg.Unmarshal(h, l.conn)
+
 	return
 }
 
@@ -162,19 +194,25 @@ func randSeqNr() (uint16, error) {
 	return binary.LittleEndian.Uint16(bytes[:]), nil
 }
 
-func (c *Conn) doServerHandshake() (err error) {
-	// TODO: only read messages from new parties hier
-	msg, err := c.recv()
+func (ls *Listener) doServerHandshake() (c *Conn, err error) {
+	l := ls.options.Logger
+
+	// TODO: only read messages from new parties here
+	connReq, addr, err := ls.recvConnFrom()
 	if err != nil {
-		return err
+		return
 	}
 
-	// TODO: improve message type check
-	if msg.GetHeader().MessageType != messages.MessageTypeConn {
-		return nil
+	l.Info("got something", zap.Uint("len", connReq.Size()), zap.String("addr", addr.String()))
+
+	conn, err := net.DialUDP(ls.options.Network, nil, addr)
+
+	c = &Conn{
+		conn:    conn,
+		Options: NewDefaultOptions(l),
 	}
 
-	connReq := msg.(*messages.Conn)
+	l.Info("migrating connection", zap.String("curIP", ls.conn.LocalAddr().String()), zap.String("newIP", conn.LocalAddr().String()))
 
 	initSeqNr, err := randSeqNr()
 	if err != nil {
@@ -202,17 +240,17 @@ func (c *Conn) doServerHandshake() (err error) {
 	}
 
 	// receive client ack
-	msg, err = c.recv()
+	msg, err := c.recv()
 
 	if msg.GetHeader().MessageType != messages.MessageTypeAck {
 		// TODO: wlad unify errors
-		return errors.New("invalid client response")
+		return nil, errors.New("invalid client response")
 	}
 
 	ack := msg.(*messages.Ack)
 	if ack.SeqNr != initSeqNr {
 		// TODO: wlad unify errors
-		return errors.New("invalid sequence number response")
+		return nil, errors.New("invalid sequence number response")
 	}
 
 	return
@@ -282,18 +320,7 @@ func (c *Conn) doClientHandshake() (err error) {
 }
 
 func (l *Listener) Accept() (*Conn, error) {
-	udpConn, err := net.ListenUDP(l.options.Network, l.laddr)
-	if err != nil {
-		return nil, err
-	}
-
-	// initiallize empty btp connection
-	c := &Conn{
-		conn:    udpConn,
-		Options: l.options,
-	}
-
-	err = c.doServerHandshake()
+	c, err := l.doServerHandshake()
 	if err != nil {
 		return nil, err
 	}
@@ -302,10 +329,13 @@ func (l *Listener) Accept() (*Conn, error) {
 }
 
 func Listen(options ConnOptions, laddr *net.UDPAddr) (l *Listener, err error) {
+	conn, err := net.ListenUDP(options.Network, laddr)
 	if err != nil {
 		return
 	}
+
 	return &Listener{
+		conn:    conn,
 		options: &options,
 		laddr:   laddr,
 	}, nil
@@ -313,6 +343,9 @@ func Listen(options ConnOptions, laddr *net.UDPAddr) (l *Listener, err error) {
 
 func Dial(options ConnOptions, laddr *net.UDPAddr, raddr *net.UDPAddr) (conn *Conn, err error) {
 	udpConn, err := net.DialUDP(options.Network, laddr, raddr)
+	if err != nil {
+		return
+	}
 
 	conn = &Conn{
 		conn:    udpConn,
@@ -320,7 +353,6 @@ func Dial(options ConnOptions, laddr *net.UDPAddr, raddr *net.UDPAddr) (conn *Co
 	}
 
 	err = conn.doClientHandshake()
-
 	if err != nil {
 		conn.close(messages.CloseReasonBadRequest)
 		return
