@@ -71,7 +71,7 @@ func (e *ElasticTcpAlgorithm) NumFreeSend() int {
 
 // implementation of methods as in Kernel TCP: https://elixir.bootlin.com/linux/latest/source/include/net/tcp.h#L1053
 
-func (e *ElasticTcpAlgorithm) ElasticCongAvoid() {
+func (e *ElasticTcpAlgorithm) CongAvoid() {
 	e.m.Lock()
 	defer e.m.Unlock()
 
