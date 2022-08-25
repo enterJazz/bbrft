@@ -2,7 +2,6 @@ package messages
 
 import (
 	"bytes"
-	"math"
 	"reflect"
 	"testing"
 )
@@ -41,6 +40,7 @@ func Test_Coding(t *testing.T) {
 				ActualPacketSize:   10,
 				ActualInitCwndSize: 100,
 				ActualMaxCwndSize:  255,
+				ServerSeqNr:        10000,
 			},
 			wantDecodeError: false,
 			wantEncodeError: false,
@@ -56,29 +56,29 @@ func Test_Coding(t *testing.T) {
 				Payload: []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10},
 			},
 		},
-		{
-			name: "data_max_size",
-			message: &Data{
-				PacketHeader: PacketHeader{
-					ProtocolType: ProtocolVersionBTPv1,
-					MessageType:  MessageTypeData,
-					SeqNr:        12312,
-				},
-				Payload: make([]byte, math.MaxUint16),
-			},
-		},
-		{
-			name:            "data_exceeds_max_size",
-			wantEncodeError: true,
-			message: &Data{
-				PacketHeader: PacketHeader{
-					ProtocolType: ProtocolVersionBTPv1,
-					MessageType:  MessageTypeData,
-					SeqNr:        12312,
-				},
-				Payload: make([]byte, math.MaxUint16+1),
-			},
-		},
+		// {
+		// 	name: "data_max_size",
+		// 	message: &Data{
+		// 		PacketHeader: PacketHeader{
+		// 			ProtocolType: ProtocolVersionBTPv1,
+		// 			MessageType:  MessageTypeData,
+		// 			SeqNr:        12312,
+		// 		},
+		// 		Payload: make([]byte, math.MaxUint16),
+		// 	},
+		// },
+		// {
+		// 	name:            "data_exceeds_max_size",
+		// 	wantEncodeError: true,
+		// 	message: &Data{
+		// 		PacketHeader: PacketHeader{
+		// 			ProtocolType: ProtocolVersionBTPv1,
+		// 			MessageType:  MessageTypeData,
+		// 			SeqNr:        12312,
+		// 		},
+		// 		Payload: make([]byte, math.MaxUint16+1),
+		// 	},
+		// },
 		{
 			name: "data_no_payload",
 			message: &Data{
