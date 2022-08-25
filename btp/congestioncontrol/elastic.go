@@ -10,6 +10,7 @@ type ElasticTcpAlgorithm struct {
 	l *zap.Logger
 
 	cwnd     int
+	max_cwnd int
 	pipe     int
 	ssthresh int
 	rtt_max  int
@@ -19,11 +20,12 @@ type ElasticTcpAlgorithm struct {
 
 const MultiplicativeDecreaseFactor = 0.7
 
-func Init(l *zap.Logger, initialCwndSize int) *ElasticTcpAlgorithm {
+func Init(l *zap.Logger, initialCwndSize, maxCwndSize int) *ElasticTcpAlgorithm {
 
 	return &ElasticTcpAlgorithm{
-		l:    l,
-		cwnd: initialCwndSize,
+		l:        l,
+		cwnd:     initialCwndSize,
+		max_cwnd: maxCwndSize,
 		// as in https://elixir.bootlin.com/linux/latest/source/net/ipv4/tcp_cong.c#L465
 		ssthresh: initialCwndSize / 2,
 	}
@@ -76,6 +78,10 @@ func (e *ElasticTcpAlgorithm) CongAvoid() {
 	defer e.m.Unlock()
 
 	// NOTE a check if tcp is cwnd limited could be inserted here
+	if e.cwnd >= e.max_cwnd {
+		e.cwnd = e.max_cwnd
+		return
+	}
 
 	// from V. Jacobson, “Congestion Avoidance and Control,” p. 21.
 	if e.cwnd < e.ssthresh {

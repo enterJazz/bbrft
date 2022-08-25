@@ -7,6 +7,7 @@ import (
 )
 
 const TestInitCwndSize = 10
+const MaxCwndSize = 20
 
 func TestElasticAlgorithm(t *testing.T) {
 	l, err := zap.NewDevelopment()
@@ -27,7 +28,7 @@ func TestElasticAlgorithm(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cc := Init(l, TestInitCwndSize)
+			cc := Init(l, TestInitCwndSize, MaxCwndSize)
 			cc.SentMessages(tt.args.i)
 
 			if cc.pipe != tt.args.i {
@@ -51,6 +52,18 @@ func TestElasticAlgorithm(t *testing.T) {
 			if cc.pipe != 0 {
 				t.Errorf("Expected cc.pipe == 0; Got: %d != 0", cc.pipe)
 			}
+
+			// check for maxCwnd
+			cc.rtt_max = 100
+			cc.rtt_curr = 1
+			for a := 0; a < 4; a++ {
+				cc.CongAvoid()
+			}
+
+			if cc.cwnd != MaxCwndSize {
+				t.Errorf("Expected cc.cwnd == MaxCwndSize; Got: %d != %d", cc.cwnd, MaxCwndSize)
+			}
+
 		})
 	}
 }
