@@ -39,6 +39,7 @@ func TestConn(t *testing.T) {
 		}
 
 		t.Log("connection accepted")
+		ok = true
 	}()
 
 	clAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:9999")
