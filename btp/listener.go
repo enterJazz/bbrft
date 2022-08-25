@@ -161,5 +161,7 @@ func (ls *Listener) doServerHandshake() (c *Conn, err error) {
 		return nil, ErrInvalidSeqNr
 	}
 
+	c.connOpen = true
+
 	return
 }

@@ -7,6 +7,7 @@ var (
 	ErrInvalidServerResp      = errors.New("invalid client response")
 	ErrInvalidSeqNr           = errors.New("invalid sequence number")
 	ErrInvalidProtocolVersion = errors.New("invalid protocol version")
+	ErrConnectionNotRead      = errors.New("connection not ready")
 )
 
 func ErrInvalidHandshakeOption(option string) error {

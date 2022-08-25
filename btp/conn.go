@@ -20,15 +20,12 @@ type ConnOptions struct {
 	Network string
 
 	// The maximum number of bytes to send in a single packet.
+	Version       messages.ProtocolVersion
 	MaxPacketSize uint16
-
 	// TODO: move to CC
 	MaxCwndSize  uint8
 	InitCwndSize uint8
-
-	CC congestioncontrol.CongestionControlAlgorithm
-
-	Version messages.ProtocolVersion
+	CC           congestioncontrol.CongestionControlAlgorithm
 
 	ReadBufferCap uint
 }
@@ -56,6 +53,9 @@ type Conn struct {
 	conn *net.UDPConn
 	// read buffer for incomming messages
 	buf []byte
+
+	// conn open is set if the connection has completed the handshake process
+	connOpen bool
 
 	rwMu sync.RWMutex
 }
@@ -89,6 +89,42 @@ func Dial(options ConnOptions, laddr *net.UDPAddr, raddr *net.UDPAddr) (c *Conn,
 	}
 
 	return
+}
+
+func (c *Conn) Write(b []byte) (n int, err error) {
+	payload := b
+	maxSize := int(c.Options.MaxPacketSize)
+
+	if !c.connOpen {
+		return 0, ErrConnectionNotRead
+	}
+	if len(b) == 0 {
+		return
+	}
+
+	for {
+		if len(payload) < maxSize {
+			return c.send(messages.NewData(payload))
+		}
+
+		lenSend, err := c.send(messages.NewData(payload[0:maxSize]))
+
+		n += lenSend
+		if err != nil {
+			return n, err
+		}
+
+		payload = payload[maxSize:]
+	}
+
+}
+
+func (c *Conn) Read(b []byte) (n int, err error) {
+	if !c.connOpen {
+		return 0, ErrConnectionNotRead
+	}
+
+	return 0, nil
 }
 
 // Close will close a connection
@@ -291,6 +327,7 @@ func (c *Conn) doClientHandshake() (err error) {
 	c.conn = newConn
 	c.sendAck(resp.SeqNr)
 
+	c.connOpen = true
 	return err
 }
 

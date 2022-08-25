@@ -37,6 +37,16 @@ func (p *Data) Marshal() ([]byte, error) {
 	return b.Bytes()
 }
 
+func NewData(b []byte) *Data {
+	return &Data{
+		PacketHeader: PacketHeader{
+			ProtocolType: ProtocolVersionBTPv1,
+			MessageType:  MessageTypeData,
+		},
+		Payload: b,
+	}
+}
+
 // Unmarshal decodes a given Data message from transport format given header was already read and reader cursor is past it
 func (p *Data) Unmarshal(h PacketHeader, r io.Reader) error {
 	// buf does not contain packet length yet
