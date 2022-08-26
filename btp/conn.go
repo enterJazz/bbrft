@@ -189,12 +189,6 @@ func (c *Conn) recv() (msg messages.Codable, err error) {
 		return nil, err
 	}
 
-	// TODO: handle invalid versions currently only skips reading
-	if h.ProtocolType != c.Options.Version {
-		// TODO: wlad unify errors
-		return nil, errors.New("received invalid packet version")
-	}
-
 	// instantiate object depending on header type
 	switch h.MessageType {
 	case messages.MessageTypeAck:
