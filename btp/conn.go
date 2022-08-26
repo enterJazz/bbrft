@@ -31,6 +31,8 @@ type ConnOptions struct {
 }
 
 func NewDefaultOptions(l *zap.Logger) *ConnOptions {
+	initCwndSize := 1
+	maxCwndSize := 10
 	return &ConnOptions{
 		Network: "udp",
 		Logger:  l,
@@ -41,7 +43,7 @@ func NewDefaultOptions(l *zap.Logger) *ConnOptions {
 		// will be reset when establishing a connection
 		InitCwndSize: 1,
 		MaxCwndSize:  10,
-		CC:           congestioncontrol.NewLockStepAlgorithm(l),
+		CC:           congestioncontrol.Init(l, initCwndSize, maxCwndSize),
 
 		ReadBufferCap: 2048,
 	}
@@ -51,7 +53,7 @@ type Conn struct {
 	Options *ConnOptions
 
 	conn *net.UDPConn
-	// read buffer for incomming messages
+	// read buffer for incoming messages
 	buf []byte
 
 	// conn open is set if the connection has completed the handshake process

@@ -94,7 +94,7 @@ func (e *ElasticTcpAlgorithm) CongAvoid() {
 }
 
 // ElasticUpdateRtt rtt: RTT of last ACKed packet
-func (e *ElasticTcpAlgorithm) UpdateRtt(rtt int) {
+func (e *ElasticTcpAlgorithm) UpdateRTT(rtt int) {
 	e.m.Lock()
 	defer e.m.Unlock()
 	// rtt increment from https://github.com/cxxtao/tcp-elastic/blob/57d4f0cd2afb261654bfa9cc1339fc2e1f3e7c9e/tcp_elastic.c#L36
