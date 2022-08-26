@@ -3,7 +3,6 @@ package messages
 import (
 	"errors"
 	"io"
-	"net"
 
 	"golang.org/x/crypto/cryptobyte"
 )
@@ -33,10 +32,10 @@ const (
 
 	// packet sizes without header
 	AckSize     = 2
-	ConnSize    = 2
-	ConnAckSize = 2
+	ConnSize    = 4
+	ConnAckSize = 8
 	CloseSize   = 1
-	DataSize    = 3 // without payload + full size is DataSize + Length
+	DataSize    = 2 // without payload + full size is DataSize + Length
 
 	// masks for decoding fields
 	HeaderProtocolVersionMask = 0xE0
@@ -67,7 +66,7 @@ type PacketHeader struct {
 	// acked packet sequence number
 	SeqNr uint16
 
-	Reserverd uint8
+	Flags uint8
 }
 
 // reads in the entire message from a io.Reader
@@ -100,7 +99,7 @@ func marshalHeader(b *cryptobyte.Builder, h PacketHeader) {
 	b.AddUint8(t)
 	b.AddUint16(h.SeqNr)
 	// reserved
-	b.AddUint8(0)
+	b.AddUint8(h.Flags)
 }
 
 func ReadHeader(r io.Reader) (h PacketHeader, err error) {
@@ -120,10 +119,9 @@ func ReadHeader(r io.Reader) (h PacketHeader, err error) {
 }
 
 func ParseHeader(buf []byte) (h PacketHeader, err error) {
+	var t uint8
 
 	s := cryptobyte.String(buf)
-
-	var t uint8
 	ok := s.ReadUint8(&t)
 	if !ok {
 		err = errors.New("failed to read protocol type")
@@ -135,27 +133,14 @@ func ParseHeader(buf []byte) (h PacketHeader, err error) {
 
 	ok = s.ReadUint16(&h.SeqNr)
 	if !ok {
-		err = errors.New("failed to read sequence number")
+		err = NewDecodeError("sequence number")
 		return
 	}
 
-	return
-}
-
-func ReadHeaderFrom(r net.PacketConn) (h PacketHeader, addr net.Addr, err error) {
-	buf := make([]byte, HeaderSize)
-	n, addr, err := r.ReadFrom(buf)
-
-	if err != nil {
+	if h.ProtocolType != ProtocolVersionBTPv1 {
+		err = NewDecodeError("protocol version missmatch")
 		return
 	}
-
-	if n != HeaderSize {
-		err = io.ErrUnexpectedEOF
-		return
-	}
-
-	h, err = ParseHeader(buf)
 
 	return
 }

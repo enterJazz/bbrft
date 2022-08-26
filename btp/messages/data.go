@@ -9,12 +9,11 @@ import (
 
 type Data struct {
 	PacketHeader
-	Flags uint8
 
 	// should not be larger 1472-HeaderSize+F64`lags to not cause MTU
 	Payload []byte
 
-	Raw []byte
+	// Raw []byte
 }
 
 func (p *Data) Size() uint {
@@ -34,9 +33,18 @@ func (p *Data) Marshal() ([]byte, error) {
 	}
 
 	b.AddUint16(uint16(len(p.Payload)))
-	b.AddUint8(p.Flags)
 	b.AddBytes(p.Payload)
 	return b.Bytes()
+}
+
+func NewData(b []byte) *Data {
+	return &Data{
+		PacketHeader: PacketHeader{
+			ProtocolType: ProtocolVersionBTPv1,
+			MessageType:  MessageTypeData,
+		},
+		Payload: b,
+	}
 }
 
 // Unmarshal decodes a given Data message from transport format given header was already read and reader cursor is past it
@@ -53,13 +61,8 @@ func (p *Data) Unmarshal(h PacketHeader, r io.Reader) error {
 	p.PacketHeader = h
 	b := cryptobyte.String(buf)
 
-	ok := b.ReadUint8(&p.Flags)
-	if !ok {
-		return NewDecodeError("flags")
-	}
-
 	var length uint16
-	ok = b.ReadUint16(&length)
+	ok := b.ReadUint16(&length)
 	if !ok {
 		return NewDecodeError("length")
 	}
