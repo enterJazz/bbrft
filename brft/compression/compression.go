@@ -1,7 +1,6 @@
 package compression
 
-type CompressionAlgorithm interface {
-	GetChunkSize() int
-	Compress(chunk []byte) []byte
-	Decompress(chunk []byte) []byte
+type Compressor interface {
+	Compress(chunk []byte) ([]byte, error)
+	Decompress(chunk []byte) ([]byte, error)
 }
