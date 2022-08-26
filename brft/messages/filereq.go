@@ -3,11 +3,10 @@ package messages
 import (
 	"errors"
 	"fmt"
-	"io"
-
-	"crypto/sha256"
 
 	"gitlab.lrz.de/bbrft/brft/common"
+	"gitlab.lrz.de/bbrft/cyberbyte"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/cryptobyte"
 )
 
@@ -42,63 +41,69 @@ type FileReq struct {
 	OptHeaders OptionalHeaders
 	// FileName of the requested file, can be at most 255 characters long
 	FileName string
-	// Checksum is the checksum of a previous partial download. If the
-	// FileReqFlagResumption is set, the checksum also has to be set. In that case the checksum must be exactly of the
-	// size of our checksum Algorithm (currently SHA256 -> 32 Byte)
+	// Checksum is the checksum of a previous partial download or if a specific
+	// file version shall be requested. Might be unitilized or zeroed.
 	Checksum []byte
 }
 
-const (
-	baseHeaderLen = 4
-)
+func (m *FileReq) baseHeaderLen() int {
+	// flags + file name length
+	return 1 + 1
+}
 
-func (m *FileReq) Marshal() ([]byte, error) {
-	if len(m.Checksum) != 0 && len(m.Checksum) != common.ChecksumSize {
+func (m *FileReq) Marshal(l *zap.Logger) ([]byte, error) {
+	if len(m.Checksum) == 0 {
+		l.Warn("unset checksum, initializing with zeros<")
+		m.Checksum = make([]byte, common.ChecksumSize)
+	}
+
+	if len(m.Checksum) != common.ChecksumSize {
 		return nil, errors.New("invalid checksum length")
 	}
 
 	fileName := []byte(m.FileName)
 	if len(fileName) > 255 {
-		return nil, errors.New("invalid filename")
+		return nil, errors.New("invalid filename length")
 	}
 
-	outLen := baseHeaderLen + len([]byte(fileName))
-	if m.Flags.IsSet(FileReqFlagResumption) {
-		outLen += sha256.Size
+	optHeaderBytes, err := marshalOptionalHeaders(m.OptHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("unable to marshal optional headers: %w", err)
 	}
+
+	// determine the length of the output
+	outLen := m.baseHeaderLen() + len(optHeaderBytes) + len([]byte(fileName)) + common.ChecksumSize
 	b := cryptobyte.NewFixedBuilder(make([]byte, 0, outLen))
 
-	// write the whole header length
-	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-		// write the filename
-		b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
-			b.AddBytes(fileName)
-		})
+	// combine the flags
+	var flags FileReqFlag
+	for _, f := range m.Flags {
+		flags = flags | f
+	}
+	l.Debug("file request flags",
+		zap.String("flags", fmt.Sprintf("%X", m.Flags)),
+		zap.String("combined_flags", fmt.Sprintf("%b", flags)),
+	)
+	b.AddUint8(uint8(flags))
 
-		// combine the flags
-		var flags FileReqFlag
-		fmt.Printf("m.Flags %X\n", m.Flags)
+	// add the number of optional header together with the actual optional headers
+	b.AddBytes(optHeaderBytes)
 
-		for _, f := range m.Flags {
-			flags = flags | f
-		}
-		fmt.Printf("flags %X\n", flags)
-		b.AddUint8(uint8(flags))
-
-		// write the checksum
-		b.AddBytes(m.Checksum)
+	// write the filename
+	b.AddUint8LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes(fileName)
 	})
 
-	raw, err := b.Bytes()
-	return raw, err
+	// write the checksum
+	b.AddBytes(m.Checksum)
+
+	return b.Bytes()
 }
 
-// TODO: Make sure the read has a deadline before calling this function
-func (m *FileReq) Read(r io.Reader) error {
+func (m *FileReq) Read(l *zap.Logger, s *cyberbyte.String) error {
 	// TODO: hand over the cyberbyte.String instead. This way we can easily
-	//		adapt the timeout when the RTT changes
-
-	s := cyberbyte.NewString(r, cyberbyte.DefaultTimeout)
+	//		adapt the timeout when the RTT changes (i.e. reuse the same
+	// 		cyberbyte.String and maybe also set a timeout field on it)
 
 	// read the flags
 	var joinedFlags uint8
@@ -117,99 +122,29 @@ func (m *FileReq) Read(r io.Reader) error {
 
 	// make sure all flags have been recognized
 	if joinedFlags > 0 {
+		// TODO: ideally this would not break the communication
 		return fmt.Errorf("%w: %X", ErrInvalidFlag, byte(joinedFlags))
 	}
 
-	// TODO: read the optional headers
-	err := m.readOptionalHeaders(s)
+	// read the optional headers
+	headers, err := readOptionalHeaders(l, s)
 	if err != nil {
 		return fmt.Errorf("unable to read optional headers: %w", err)
 	}
-
-	// TODO: read the filename length
-
-	// TODO: read an parse the filename and checksum
+	m.OptHeaders = headers
 
 	// read the filename
-	var fileName cryptobyte.String
-	if !s.ReadUint8LengthPrefixed(&fileName) {
-		return ErrReadFailed
+	var fileName []byte
+	if s.ReadUint8LengthPrefixedBytes(&fileName) != nil {
+		return fmt.Errorf("unable to read file name: %w", err)
 	}
 	m.FileName = string(fileName)
 
-	// potentially read the checksum
-	if m.Flags.IsSet(FileReqFlagResumption) {
-		m.Checksum = make([]byte, common.ChecksumSize)
-		if !s.ReadBytes(&m.Checksum, common.ChecksumSize) {
-			return ErrReadFailed
-		}
-	}
-
-	if !s.Empty() {
-		// TODO: Better errror message
-		return errors.New("bytes remaining")
+	// read the checksum
+	m.Checksum = make([]byte, common.ChecksumSize)
+	if s.ReadBytes(&m.Checksum, common.ChecksumSize) != nil {
+		return fmt.Errorf("unable to read checksum: %w", err)
 	}
 
 	return nil
-}
-
-func (m *FileReq) readOptionalHeaders(s cyberbyte.String) error {
-	// get the number of the optional headers
-	var numHeaders uint8
-	if err := s.ReadUint8(&numHeaders); err != nil {
-		return err
-	}
-
-	headers := make(OptionalHeaders, 0, numHeaders)
-	for n := 0; n < numHeaders; n++ {
-
-		// read the length & type
-		var length, optType uint8
-		if err := s.ReadUint8(&length); err != nil {
-			return err
-		}
-		if err := s.ReadUint8(&optType); err != nil {
-			return err
-		}
-
-		// check whether the type is known
-		var header OptionalHeader
-		switch optType {
-		case OptionalHeaderTypeReserved:
-			// TODO: probably just log
-			return errors.New("received reserved optional header")
-		case OptionalHeaderTypeCompressionReq:
-			// TODO: Parse the header
-		case OptionalHeaderTypeCompressionResp:
-			// TODO: this should be an error as it is only allowed in reponses, not requests - figure out how to handle (custom error/boolean/custom optional header type)
-			// TODO: log somewhere
-
-		default:
-			// TODO: log somewhere
-			header = UnknownOptionalHeader{
-				Length: length,
-				Type:   optType,
-			}
-		}
-		headers = append(headers, header)
-	}
-
-}
-
-func (m *FileReq) GetLength(r io.Reader) (int, error) {
-	// read the length from the reader
-	lenB := make([]byte, 2)
-	n, err := r.Read(lenB)
-	if err != nil {
-		return 0, err
-	} else if n != 2 {
-		return 0, errors.New("insufficient Read")
-	}
-
-	s := cryptobyte.String(lenB)
-	var len uint16
-	if !s.ReadUint16(&len) {
-		return 0, ErrReadFailed
-	}
-	return int(len), nil
 }

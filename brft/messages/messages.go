@@ -47,6 +47,7 @@ type PacketHeader struct {
 	MessageType  MessageType
 }
 
+// TODO: Maybe also create a cyberbyte.Builder
 func AddUint64(b *cryptobyte.Builder, v uint64) {
 	b.AddBytes([]byte{
 		byte(v >> 56), byte(v >> 48), byte(v >> 40), byte(v >> 32),
@@ -54,6 +55,7 @@ func AddUint64(b *cryptobyte.Builder, v uint64) {
 	})
 }
 
+// TODO: Remove once everything has been ported to cyberbyte.String
 func ReadUint64(s *cryptobyte.String, out *uint64) bool {
 	v := make([]byte, 0, 8)
 	if !s.ReadBytes(&v, 8) {
