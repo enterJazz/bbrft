@@ -47,6 +47,7 @@ type Codable interface {
 	Unmarshal(h PacketHeader, r io.Reader) error
 	Size() uint
 	GetHeader() PacketHeader
+	SetSeqNr(seqNr uint16)
 }
 
 // 0                   1                   2                   3
