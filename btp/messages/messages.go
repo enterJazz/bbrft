@@ -27,6 +27,22 @@ const (
 	MessageTypeClose   MessageType = iota + 1
 )
 
+func (m MessageType) String() string {
+	switch m {
+	case MessageTypeAck:
+		return "Ack"
+	case MessageTypeConn:
+		return "Conn"
+	case MessageTypeConnAck:
+		return "ConnAck"
+	case MessageTypeData:
+		return "Data"
+	case MessageTypeClose:
+		return "Close"
+	}
+	return "uknown"
+}
+
 const (
 	HeaderSize = 4
 
