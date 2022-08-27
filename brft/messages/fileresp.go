@@ -1,38 +1,105 @@
 package messages
 
-import "io"
+import (
+	"errors"
+	"fmt"
 
-type FileRespStatusCode uint8
+	"gitlab.lrz.de/bbrft/brft/common"
+	"gitlab.lrz.de/bbrft/cyberbyte"
+	"go.uber.org/zap"
+	"golang.org/x/crypto/cryptobyte"
+)
+
+type FileRespStatus uint8
 
 const (
-	FileRespStatusCodeUndefined FileRespStatusCode = iota
-	FileRespStatusCodeOk
-	FileRespStatusCodeFileChanged
+	FileRespStatusUndefined FileRespStatus = iota
+	FileRespStatusOk
+	FileRespStatusFileChanged
 	// ...
 )
 
+type StreamID uint16
+
 type FileResp struct {
-	PacketHeader
-	StatusCode FileRespStatusCode
-	// Checksum of the file the server offers for download. TODO: Maybe mutiple?
-	Checksum uint64 // TODO: How long?!
-	StreamID uint16
+	Status     FileRespStatus
+	OptHeaders OptionalHeaders
+
+	StreamID StreamID
 	FileSize uint64
 
-	// TODO: Maybe add a mechanism for the compression algorithms - would have to include a header length in that case as well
-
-	Raw []byte
+	// Checksum of the file the server offers for download. Must have a length
+	// of common.ChecksumSize
+	Checksum []byte
 }
 
-func (m *FileResp) Marshal() ([]byte, error) {
-
-	return nil, nil
+func (m *FileResp) baseHeaderLen() int {
+	// status + streamID + file size
+	return 1 + 2 + 8
 }
 
-func (m *FileResp) Unmarshal([]byte) error {
+func (m *FileResp) Marshal(l *zap.Logger) ([]byte, error) {
+	if len(m.Checksum) != common.ChecksumSize {
+		return nil, errors.New("invalid checksum length")
+	}
+
+	optHeaderBytes, err := marshalOptionalHeaders(m.OptHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("unable to marshal optional headers: %w", err)
+	}
+
+	// determine the length of the output
+	outLen := m.baseHeaderLen() + len(optHeaderBytes) + common.ChecksumSize
+	b := cryptobyte.NewFixedBuilder(make([]byte, 0, outLen))
+
+	// add the status
+	b.AddUint8(uint8(m.Status))
+
+	// add the number of optional header together with the actual optional headers
+	b.AddBytes(optHeaderBytes)
+
+	// add the streamID, file size and checksum
+	b.AddUint16(uint16(m.StreamID))
+	AddUint64(b, m.FileSize)
+	b.AddBytes(m.Checksum)
+
+	return b.Bytes()
+}
+
+func (m *FileResp) Read(l *zap.Logger, s *cyberbyte.String) error {
+	// read the status
+	var status uint8
+	if err := s.ReadUint8(&status); err != nil {
+		return fmt.Errorf("unable to read status: %w", err)
+	}
+	m.Status = FileRespStatus(status)
+
+	// read the optional headers
+	headers, err := readOptionalHeaders(l, s)
+	if err != nil {
+		return fmt.Errorf("unable to read optional headers: %w", err)
+	}
+	m.OptHeaders = headers
+
+	// read the streamID
+	var streamID uint16
+	if err := s.ReadUint16(&streamID); err != nil {
+		return fmt.Errorf("unable to read streamID: %w", err)
+	}
+	m.StreamID = StreamID(streamID)
+
+	// read the streamID
+	var fileSize uint64
+	if err := s.ReadUint64(&fileSize); err != nil {
+		return fmt.Errorf("unable to read file size: %w", err)
+	}
+	m.FileSize = fileSize
+
+	// read the checksum
+	m.Checksum = make([]byte, common.ChecksumSize)
+	if s.ReadBytes(&m.Checksum, common.ChecksumSize) != nil {
+		return fmt.Errorf("unable to read checksum: %w", err)
+	}
+
 	return nil
-}
-
-func (m *FileResp) GetLength(io.Reader) int {
-	return 11
 }
