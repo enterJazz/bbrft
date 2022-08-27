@@ -11,6 +11,9 @@ type Conn struct {
 	// maximal packet size acceptable by initiator/client
 	MaxPacketSize uint16
 
+	InitCwndSize uint8
+	MaxCwndSize  uint8
+
 	// TODO: figure out testing
 	// Raw []byte
 }
@@ -28,6 +31,9 @@ func (p *Conn) Marshal() ([]byte, error) {
 	b := createPacketBuilder(p)
 
 	b.AddUint16(p.MaxPacketSize)
+	b.AddUint8(p.InitCwndSize)
+	b.AddUint8(p.MaxCwndSize)
+
 	return b.Bytes()
 }
 
@@ -47,6 +53,16 @@ func (p *Conn) Unmarshal(h PacketHeader, r io.Reader) error {
 	ok := b.ReadUint16(&p.MaxPacketSize)
 	if !ok {
 		return NewDecodeError("MaxPacketSize")
+	}
+
+	ok = b.ReadUint8(&p.InitCwndSize)
+	if !ok {
+		return NewDecodeError("InitCwndSize")
+	}
+
+	ok = b.ReadUint8(&p.MaxCwndSize)
+	if !ok {
+		return NewDecodeError("MaxCwndSize")
 	}
 
 	return nil

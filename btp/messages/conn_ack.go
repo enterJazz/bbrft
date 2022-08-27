@@ -9,10 +9,16 @@ import (
 type ConnAck struct {
 	PacketHeader
 
+	ServerSeqNr uint16
+
 	// packet size selected by server
 	ActualPacketSize uint16
 
-	Raw []byte
+	ActualInitCwndSize uint8
+	ActualMaxCwndSize  uint8
+
+	MigrationPort uint16
+	// Raw []byte
 }
 
 func (p *ConnAck) Size() uint {
@@ -28,7 +34,11 @@ func (p *ConnAck) Marshal() ([]byte, error) {
 	b := createPacketBuilder(p)
 
 	// packet encoding after header
+	b.AddUint16(p.ServerSeqNr)
 	b.AddUint16(p.ActualPacketSize)
+	b.AddUint8(p.ActualInitCwndSize)
+	b.AddUint8(p.ActualMaxCwndSize)
+	b.AddUint16(p.MigrationPort)
 	return b.Bytes()
 }
 
@@ -40,14 +50,34 @@ func (p *ConnAck) Unmarshal(h PacketHeader, r io.Reader) error {
 	}
 
 	// as debug save butes on package
-	p.Raw = buf
+	// p.Raw = buf
 
 	p.PacketHeader = h
 	b := cryptobyte.String(buf)
 
-	ok := b.ReadUint16(&p.ActualPacketSize)
+	ok := b.ReadUint16(&p.ServerSeqNr)
+	if !ok {
+		return NewDecodeError("ServerSeqNr")
+	}
+
+	ok = b.ReadUint16(&p.ActualPacketSize)
 	if !ok {
 		return NewDecodeError("ActualPacketSize")
+	}
+
+	ok = b.ReadUint8(&p.ActualInitCwndSize)
+	if !ok {
+		return NewDecodeError("ActualInitCwndSize")
+	}
+
+	ok = b.ReadUint8(&p.ActualMaxCwndSize)
+	if !ok {
+		return NewDecodeError("ActualMaxCwndSize")
+	}
+
+	ok = b.ReadUint16(&p.MigrationPort)
+	if !ok {
+		return NewDecodeError("MigrationPort")
 	}
 
 	return nil
