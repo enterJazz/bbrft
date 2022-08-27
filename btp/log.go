@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	FBTPHeaderProtocolVersion = "version"
-	FBTPHeaderMessageType     = "message_type"
+	FBTPHeaderProtocolVersion   = "version"
+	FBTPHeaderMessageType       = "message_type"
+	FBTPHeaderMessageTypeString = "message_type_name"
 )
 
 func FHeaderProtocolVersion(v messages.ProtocolVersion) zap.Field {
@@ -16,4 +17,8 @@ func FHeaderProtocolVersion(v messages.ProtocolVersion) zap.Field {
 
 func FHeaderMessageType(t messages.MessageType) zap.Field {
 	return zap.Uint8(FBTPHeaderMessageType, uint8(t))
+}
+
+func FHeaderMessageTypeString(t messages.MessageType) zap.Field {
+	return zap.String(FBTPHeaderMessageTypeString, t.String())
 }

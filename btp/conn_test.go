@@ -9,8 +9,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// TODO: Write test for marshal and unmarshal individually
-
 func TestConn(t *testing.T) {
 	l, err := zap.NewDevelopment()
 	if err != nil {
@@ -21,7 +19,7 @@ func TestConn(t *testing.T) {
 		t.Errorf("server ResolveUDPAddr error = %v", err)
 		return
 	}
-	ls, err := Listen(*NewDefaultOptions(l), lAddr)
+	ls, err := Listen(*NewDefaultOptions(l), lAddr, l)
 	if err != nil {
 		t.Errorf("server Listen error = %v", err)
 		return
@@ -47,7 +45,7 @@ func TestConn(t *testing.T) {
 		t.Errorf("client ResolveUDPAddr error = %v", err)
 		return
 	}
-	_, err = Dial(*NewDefaultOptions(l), clAddr, lAddr)
+	_, err = Dial(*NewDefaultOptions(l), clAddr, lAddr, l)
 	if err != nil {
 		t.Errorf("Dial error = %v", err)
 		return
@@ -64,12 +62,12 @@ func TestConnMultiple(t *testing.T) {
 	if err != nil {
 		t.Fatal("unable to initialize logger")
 	}
-	lAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:1337")
+	lAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:1338")
 	if err != nil {
 		t.Errorf("server ResolveUDPAddr error = %v", err)
 		return
 	}
-	ls, err := Listen(*NewDefaultOptions(l), lAddr)
+	ls, err := Listen(*NewDefaultOptions(l), lAddr, l)
 	if err != nil {
 		t.Errorf("server Listen error = %v", err)
 		return
@@ -77,7 +75,7 @@ func TestConnMultiple(t *testing.T) {
 
 	// use okay to wait for a connection
 	acceptedCoons := 0
-	numConns := 100
+	numConns := 10
 
 	go func() {
 		for {
@@ -100,7 +98,7 @@ func TestConnMultiple(t *testing.T) {
 			t.Errorf("client ResolveUDPAddr error = %v", err)
 			return
 		}
-		_, err = Dial(*NewDefaultOptions(l), clAddr, lAddr)
+		_, err = Dial(*NewDefaultOptions(l), clAddr, lAddr, l)
 		if err != nil {
 			t.Errorf("Dial error = %v", err)
 			return

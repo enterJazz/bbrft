@@ -14,10 +14,12 @@ type Listener struct {
 	conn    *net.UDPConn
 	options *ConnOptions
 	laddr   *net.UDPAddr
+
+	logger *zap.Logger
 }
 
 func (ls *Listener) Accept() (*Conn, error) {
-	l := ls.options.Logger
+	l := ls.logger
 	c, err := ls.doServerHandshake()
 	if err != nil {
 		return nil, err
@@ -27,19 +29,17 @@ func (ls *Listener) Accept() (*Conn, error) {
 	return c, nil
 }
 
-func Listen(options ConnOptions, laddr *net.UDPAddr) (l *Listener, err error) {
+func Listen(options ConnOptions, laddr *net.UDPAddr, logger *zap.Logger) (l *Listener, err error) {
 	conn, err := net.ListenUDP(options.Network, laddr)
 	if err != nil {
 		return
 	}
 
-	// TODO: move logger from options
-	options.Logger = options.Logger.Named("listener").With(zap.String("ip", conn.LocalAddr().String()))
-
 	return &Listener{
 		conn:    conn,
 		options: &options,
 		laddr:   laddr,
+		logger:  logger.Named("listener").With(zap.String("ip", conn.LocalAddr().String())),
 	}, nil
 }
 
@@ -73,12 +73,15 @@ func (ls *Listener) createConnResp(conn *net.UDPConn, req *messages.Conn) (resp 
 	if err != nil {
 		return
 	}
+
 	resp = &messages.ConnAck{
 		PacketHeader: messages.PacketHeader{
 			ProtocolType: ls.options.Version,
 			MessageType:  messages.MessageTypeConnAck,
-			SeqNr:        initSeqNr,
+			SeqNr:        req.SeqNr,
+			Flags:        2,
 		},
+		ServerSeqNr:        initSeqNr,
 		MigrationPort:      uint16(conn.LocalAddr().(*net.UDPAddr).Port),
 		ActualInitCwndSize: req.InitCwndSize,
 		ActualMaxCwndSize:  req.MaxCwndSize,
@@ -108,7 +111,8 @@ func (ls *Listener) dialMigratedConn(addr *net.UDPAddr) (c *Conn, err error) {
 		return nil, err
 	}
 
-	c = NewConn(conn, *ls.options)
+	c = newConn(conn, *ls.options, ls.logger)
+	c.isServerConnection = true
 
 	return
 }
@@ -120,14 +124,14 @@ func (ls *Listener) doServerHandshake() (c *Conn, err error) {
 		return
 	}
 
-	l := ls.options.Logger.Named("handshake").With(zap.String("source_addr", raddr.String()))
-	l.Debug("new incomming request", zap.Uint("len", req.Size()))
+	l := ls.logger.Named("handshake").With(zap.String("raddr", raddr.String()))
+	l.Debug("new connection req", zap.Uint("len", req.Size()))
 
 	c, err = ls.dialMigratedConn(raddr)
 	if err != nil {
 		return
 	}
-	l.Debug("migrating", zap.Uint("len", req.Size()), zap.String("new_local_addr", c.conn.LocalAddr().String()))
+	l.Debug("migrating local port", zap.Uint("len", req.Size()), zap.String("new_local_addr", c.conn.LocalAddr().String()))
 
 	// try negotiating a valid option
 	resp, err := ls.createConnResp(c.conn, req)
@@ -147,21 +151,17 @@ func (ls *Listener) doServerHandshake() (c *Conn, err error) {
 		return nil, err
 	}
 
-	// receive client ack on new port
-	msg, err := c.recv()
+	c.currentSeqNr = resp.ServerSeqNr
 
-	l.Debug("got client response", zap.Uint8("msg_type", uint8(msg.GetHeader().MessageType)), zap.Uint16("seq_nr", msg.GetHeader().SeqNr))
+	// start run loop
+	c.start()
 
-	if msg.GetHeader().MessageType != messages.MessageTypeAck {
-		return nil, ErrInvalidClientResp
+	l.Debug("waiting for client response")
+	openErr := <-c.openChan
+	if openErr != nil {
+		return nil, openErr
 	}
 
-	ack := msg.(*messages.Ack)
-	if ack.SeqNr != resp.SeqNr {
-		return nil, ErrInvalidSeqNr
-	}
-
-	c.connOpen = true
-
+	l.Debug("handshake completed")
 	return
 }
