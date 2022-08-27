@@ -64,8 +64,12 @@ type Conn struct {
 	Options *ConnOptions
 
 	conn *net.UDPConn
-	// read buffer for incoming messages
-	buf []byte
+	// packet read buffer for incoming messages
+	buf      []byte
+	dataChan chan *messages.Data
+	// byte read buffer for ordered messages
+	readBuf bytes.Buffer
+	// TODO check Kernel who reorders what? (Read vs Conn)
 
 	// conn open is set if the connection has completed the handshake process
 	isConnOpen bool
@@ -165,12 +169,37 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 
 }
 
+// / Read() returns io.Err if channel closed and read buf cannot be filled completely
+// / returns num bytes read
 func (c *Conn) Read(b []byte) (n int, err error) {
-	if !c.isConnOpen {
-		return 0, ErrConnectionNotReady
+	// TODO @robert
+	// reorder buffer / reordering
+	// read + order dataChan
+	// returns Byte Stream!
+	// Issue: which component does what?
+	err = nil
+
+	//	if !c.connOpen {
+	//		return 0, ErrConnectionNotRead
+	//	}
+
+	// assumption: dataChan ordered beforehand by flow ctrl
+	for c.readBuf.Len() < len(b) {
+		in_packet, ok := <-c.dataChan
+		if !ok {
+			err = io.EOF
+			break
+		}
+		c.readBuf.Write(in_packet.Payload)
 	}
 
-	return 0, nil
+	n, err2 := c.readBuf.Read(b)
+	if err2 != nil {
+		c.logger.Warn("Read() failed", zap.Error(err2))
+		err = err2
+	}
+
+	return n, err
 }
 
 // Close will close a connection

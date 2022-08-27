@@ -2,10 +2,12 @@ package btp
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"testing"
 	"time"
 
+	"gitlab.lrz.de/bbrft/btp/messages"
 	"go.uber.org/zap"
 )
 
@@ -74,7 +76,7 @@ func TestConnMultiple(t *testing.T) {
 	}
 
 	// use okay to wait for a connection
-	acceptedCoons := 0
+	acceptedConns := 0
 	numConns := 10
 
 	go func() {
@@ -87,8 +89,8 @@ func TestConnMultiple(t *testing.T) {
 				return
 			}
 
-			t.Log("connection accepted", acceptedCoons)
-			acceptedCoons++
+			t.Log("connection accepted", acceptedConns)
+			acceptedConns++
 		}
 	}()
 
@@ -105,8 +107,70 @@ func TestConnMultiple(t *testing.T) {
 		}
 	}
 
-	for acceptedCoons != numConns {
+	for acceptedConns != numConns {
 		time.Sleep(time.Millisecond * 100)
 	}
 
+}
+
+func TestRead(t *testing.T) {
+	l, err := zap.NewDevelopment()
+	if err != nil {
+		t.Fatal("unable to initialize logger")
+	}
+	conn := Conn{dataChan: make(chan *messages.Data, 2), logger: l}
+	payload := []byte{1, 2, 3, 4}
+
+	test_buf_1 := make([]byte, 2)
+	test_buf_2 := make([]byte, 2)
+
+	testDataPacket := messages.NewData(payload)
+	conn.dataChan <- testDataPacket
+
+	_, err1 := conn.Read(test_buf_1)
+	if err1 != nil {
+		t.Errorf("Read() error: %v", err1)
+	}
+
+	_, err2 := conn.Read(test_buf_2)
+	if err2 != nil {
+		t.Errorf("Read() error: %v", err2)
+	}
+
+	for i := 0; i < 4; i++ {
+		j := i % len(test_buf_1)
+		var compare byte
+		if i < 2 {
+			compare = test_buf_1[j]
+		} else {
+			compare = test_buf_2[j]
+		}
+		if payload[i] != compare {
+			t.Errorf("Expected: %v, Got: %v", payload[i], compare)
+		}
+	}
+
+	test_buf_3 := make([]byte, 2)
+	in := []byte{5, 6}
+	go func() {
+		_, err3 := conn.Read(test_buf_3)
+		if err3 != nil {
+			t.Errorf("Read() error: %v", err3)
+		}
+	}()
+	conn.dataChan <- messages.NewData(in)
+	time.Sleep(time.Second * 1)
+
+	for i := 0; i < 2; i++ {
+		if test_buf_3[i] != in[i] {
+			t.Errorf("Expected: %v, Got: %v", in[i], test_buf_3[i])
+		}
+	}
+
+	close(conn.dataChan)
+	test_buf_4 := make([]byte, 2)
+	_, err4 := conn.Read(test_buf_4)
+	if err4 != io.EOF {
+		t.Errorf("Expected: %v, Got: %v", io.EOF, err4)
+	}
 }
