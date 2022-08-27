@@ -28,7 +28,7 @@ func TestElasticAlgorithm(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cc := Init(l, TestInitCwndSize, MaxCwndSize)
+			cc := NewElasticTcpAlgorithm(l, TestInitCwndSize, MaxCwndSize)
 			cc.SentMessages(tt.args.i)
 
 			if cc.pipe != tt.args.i {

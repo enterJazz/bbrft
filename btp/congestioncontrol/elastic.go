@@ -1,9 +1,10 @@
 package congestioncontrol
 
 import (
-	"go.uber.org/zap"
 	"math"
 	"sync"
+
+	"go.uber.org/zap"
 )
 
 type ElasticTcpAlgorithm struct {
@@ -20,7 +21,7 @@ type ElasticTcpAlgorithm struct {
 
 const MultiplicativeDecreaseFactor = 0.7
 
-func Init(l *zap.Logger, initialCwndSize, maxCwndSize int) *ElasticTcpAlgorithm {
+func NewElasticTcpAlgorithm(l *zap.Logger, initialCwndSize, maxCwndSize int) *ElasticTcpAlgorithm {
 
 	return &ElasticTcpAlgorithm{
 		l:        l,
