@@ -27,7 +27,7 @@ func TestFileRespMarshalUnmarshal(t *testing.T) {
 		wantErrMarshal   bool
 		wantErrUnmarshal bool
 	}{
-		// TODO: Add test cases.
+		// TODO: Add more test cases.
 		{"valid-1", FileResp{
 			Status:     FileRespStatusOk,
 			OptHeaders: OptionalHeaders{},

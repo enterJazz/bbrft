@@ -6,7 +6,7 @@ import (
 )
 
 type Server struct {
-	conn btp.Conn
+	conn *btp.Conn
 
 	// initialized during the handshake
 	compressor compression.Compressor
@@ -16,7 +16,7 @@ type Server struct {
 }
 
 func NewServer(
-	conn btp.Conn,
+	conn *btp.Conn,
 ) *Server {
 	return &Server{
 		conn:      conn,

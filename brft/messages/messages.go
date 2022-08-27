@@ -1,19 +1,14 @@
 package messages
 
 import (
-	"io"
-
+	"gitlab.lrz.de/bbrft/cyberbyte"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/cryptobyte"
 )
 
-// TODO: Define message contents - make sure to
-//		- not include the length field length when we use it anywhere
-//		- use the Builder from golang.org/x/crypto/cryptobyte
-
 type BRFTMessage interface {
-	Marshal() ([]byte, error)
-	Unmarshal([]byte) error
-	GetLength(io.Reader) int
+	Marshal(l *zap.Logger) ([]byte, error)
+	Read(l *zap.Logger, s *cyberbyte.String) error
 }
 
 // ProcolType defines the protocol type of the packet
