@@ -93,7 +93,7 @@ func TestComm(t *testing.T) {
 // tests simple read / write between connections
 func TestLargeComm(t *testing.T) {
 	client, server := setupConn(t)
-	testPayload := make([]byte, 20*1024*1024)
+	testPayload := make([]byte, 2*1024*1024)
 	_, err := rand.Read(testPayload)
 	if err != nil {
 		t.Errorf("rand.Read() failed: %v", err)
