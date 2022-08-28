@@ -40,7 +40,7 @@ func (m MessageType) String() string {
 	case MessageTypeClose:
 		return "Close"
 	}
-	return "uknown"
+	return "unknown"
 }
 
 const (

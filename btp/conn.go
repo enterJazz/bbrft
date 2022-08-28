@@ -601,7 +601,7 @@ func (c *Conn) processAck(h messages.PacketHeader) error {
 			c.Options.CC.UpdateRTT(int(c.rttMeasurement.srtt))
 		}
 	} else {
-		l.Warn("got Ack for uknown packet", zap.Uint16("ack_seq_nr", h.SeqNr), FSequenceNumber(c.packetNumberGenerator.Peek()))
+		l.Warn("got Ack for unknown packet", zap.Uint16("ack_seq_nr", h.SeqNr), FSequenceNumber(c.packetNumberGenerator.Peek()))
 	}
 
 	return nil

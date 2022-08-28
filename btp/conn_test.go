@@ -3,6 +3,7 @@ package btp
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
 	"net"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ import (
 const testNetwork = "udp"
 
 func setupConn(t *testing.T) (cl_c, s_c *Conn) {
-	l, err := zap.NewDevelopment()
+	l, err := zap.NewProduction()
 	if err != nil {
 		t.Fatal("unable to initialize logger")
 	}
@@ -86,6 +87,34 @@ func TestComm(t *testing.T) {
 
 	if !bytes.Equal(test_payload, read_buf) {
 		t.Errorf("Expected read_buf: %v, Got: %v", test_payload, read_buf)
+	}
+}
+
+// tests simple read / write between connections
+func TestLargeComm(t *testing.T) {
+	client, server := setupConn(t)
+	testPayload := make([]byte, 20*1024*1024)
+	_, err := rand.Read(testPayload)
+	if err != nil {
+		t.Errorf("rand.Read() failed: %v", err)
+	}
+
+	readBuf := make([]byte, len(testPayload))
+	startTime := time.Now()
+
+	go func() {
+		if _, err := server.Write(testPayload); err != nil {
+			t.Errorf("Write() failed: %v", err)
+		}
+	}()
+
+	if _, err := client.Read(readBuf); err != nil {
+		t.Errorf("Read() failed: %v", err)
+	}
+	fmt.Printf("Speed %f Mbit/Sec \n", float64(len(testPayload)/1024/1024)/(float64(time.Since(startTime))/float64(time.Second))*8)
+
+	if !bytes.Equal(testPayload, readBuf) {
+		t.Errorf("Buffers do not match")
 	}
 }
 

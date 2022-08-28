@@ -60,7 +60,12 @@ func (r *RTTMeasurement) RTO() time.Duration {
 
 	// TODO: clock granularity (G) is ignored for now
 	// RTO <- SRTT + max (G, K*RTTVAR)
-	return r.srtt + 4*r.rttvar
+	rto := r.srtt + 4*r.rttvar
+
+	if rto < 500*time.Millisecond {
+		return 500 * time.Millisecond
+	}
+	return rto
 }
 
 func (r *RTTMeasurement) Min() time.Duration {
