@@ -191,7 +191,7 @@ func TestRead(t *testing.T) {
 		}
 	}()
 	sdr.Push(messages.NewData(in))
-	time.Sleep(time.Second * 1)
+	time.Sleep(time.Millisecond * 100)
 
 	for i := 0; i < 2; i++ {
 		if testBuf3[i] != in[i] {
