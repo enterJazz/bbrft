@@ -3,8 +3,6 @@ package btp
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -53,7 +51,7 @@ func NewDefaultOptions(l *zap.Logger) *ConnOptions {
 type packet struct {
 	transmissionTime time.Time
 
-	seqNr   uint16
+	seqNr   PacketNumber
 	payload []byte
 
 	rtoDuration time.Duration
@@ -65,8 +63,7 @@ type Conn struct {
 
 	conn *net.UDPConn
 	// packet read buffer for incoming messages
-	buf      []byte
-	dataChan chan *messages.Data
+	buf []byte
 	// byte read buffer for ordered messages
 	readBuf bytes.Buffer
 	// TODO check Kernel who reorders what? (Read vs Conn)
@@ -95,8 +92,9 @@ type Conn struct {
 	rxChan chan messages.Codable
 	txChan chan messages.Codable
 
-	currentSeqNr    uint16
-	inflightPackets map[uint16]*packet // packets currently awaiting acknowledgements
+	sequentialDataReader  *sequentialDataReader
+	packetNumberGenerator packetNumberGenerator
+	inflightPackets       map[PacketNumber]*packet // packets currently awaiting acknowledgements
 
 	logger *zap.Logger
 }
@@ -177,7 +175,6 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 	// read + order dataChan
 	// returns Byte Stream!
 	// Issue: which component does what?
-	err = nil
 
 	//	if !c.connOpen {
 	//		return 0, ErrConnectionNotRead
@@ -185,18 +182,16 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 
 	// assumption: dataChan ordered beforehand by flow ctrl
 	for c.readBuf.Len() < len(b) {
-		in_packet, ok := <-c.dataChan
-		if !ok {
-			err = io.EOF
-			break
+		inPacket, err := c.sequentialDataReader.Next()
+		if err != nil {
+			return 0, err
 		}
-		c.readBuf.Write(in_packet.Payload)
+		c.readBuf.Write(inPacket.Payload)
 	}
 
-	n, err2 := c.readBuf.Read(b)
-	if err2 != nil {
-		c.logger.Warn("Read() failed", zap.Error(err2))
-		err = err2
+	n, err = c.readBuf.Read(b)
+	if err != nil {
+		c.logger.Warn("Read() failed", zap.Error(err))
 	}
 
 	return n, err
@@ -215,24 +210,24 @@ func newConn(conn *net.UDPConn, options ConnOptions, l *zap.Logger) *Conn {
 		buf:     make([]byte, options.ReadBufferCap),
 		logger: l.Named("conn").With(zap.String("ip",
 			conn.LocalAddr().String())),
-		inflightPackets: make(map[uint16]*packet),
+		inflightPackets: make(map[PacketNumber]*packet),
 		openChan:        make(chan error),
 		rxChan:          make(chan messages.Codable, options.MaxCwndSize),
 		txChan:          make(chan messages.Codable, options.MaxCwndSize),
+		// TODO: use some better buffer defaults
+		sequentialDataReader: NewDataReader(100, 50),
 	}
+
+	gen, err := NewRandomNumberGenerator()
+	if err != nil {
+		l.Panic("could not create initial sequence number")
+	}
+	c.packetNumberGenerator = gen
 
 	c.ctx, c.ctxCancel = context.WithCancel(context.Background())
 	c.rttMeasurement = NewRttMeasurement()
 
 	return c
-}
-
-func (c *Conn) nextSeqNumber() uint16 {
-	return c.currentSeqNr
-}
-
-func (c *Conn) incrementSequenceNumber() {
-	c.currentSeqNr = c.currentSeqNr + 1
 }
 
 func (c *Conn) send(msg messages.Codable) (n int, err error) {
@@ -251,11 +246,11 @@ func (c *Conn) transmit(msg messages.Codable) (n int, err error) {
 	if requiresAck {
 		p = &packet{
 			transmissionTime: time.Now(),
-			seqNr:            c.nextSeqNumber(),
+			seqNr:            c.packetNumberGenerator.Peek(),
 			retransmits:      0,
 			rtoDuration:      c.rttMeasurement.RTO(),
 		}
-		msg.SetSeqNr(p.seqNr)
+		msg.SetSeqNr(uint16(p.seqNr))
 	}
 
 	buf, err := msg.Marshal()
@@ -284,7 +279,7 @@ func (c *Conn) transmit(msg messages.Codable) (n int, err error) {
 	if requiresAck {
 		// only increment sequence number if transmission was actually completed
 		// otherwise there might be a gap in the sequence numbers
-		c.incrementSequenceNumber()
+		c.packetNumberGenerator.Next()
 	}
 
 	if n != len(buf) {
@@ -303,7 +298,7 @@ func (c *Conn) retransmit(p *packet) (n int, err error) {
 	p.transmissionTime = time.Now()
 
 	n, err = c.conn.Write(p.payload)
-	l.Debug("send lost packet", zap.Int("len", n), zap.Uint16("SeqNr", p.seqNr))
+	l.Debug("send lost packet", zap.Int("len", n), zap.Uint16("SeqNr", uint16(p.seqNr)))
 
 	p.retransmits++
 
@@ -438,11 +433,11 @@ func (c *Conn) onMessage(msg messages.Codable) error {
 	case messages.MessageTypeAck:
 
 		if c.isServerConnection && !c.isConnOpen {
-			l.Debug("got client response", zap.Uint16("seq_nr", msg.GetHeader().SeqNr))
+			l.Debug("got client response", FSequenceNumber(PacketNumber(msg.GetHeader().SeqNr)))
 
 			ack := msg.(*messages.Ack)
 			// ack sequence number must match the current seqNr since no data can be send before connection is open
-			if ack.SeqNr != c.currentSeqNr {
+			if ack.SeqNr != uint16(c.packetNumberGenerator.Peek()) {
 				c.openChan <- ErrInvalidClientResp
 				return ErrInvalidSeqNr
 			}
@@ -485,6 +480,10 @@ func (c *Conn) onMessage(msg messages.Codable) error {
 			c.openChan <- err
 			return err
 		}
+
+		// store next packet number for server messages
+		c.sequentialDataReader.nextSeqNr = PacketNumber(resp.ServerSeqNr)
+
 		c.isConnOpen = true
 		// success
 		c.openChan <- nil
@@ -496,7 +495,9 @@ func (c *Conn) onMessage(msg messages.Codable) error {
 		if !c.isConnOpen {
 			return ErrConnectionNotReady
 		}
+		// TODO: @wlad should we first send ack or process message?
 		c.sendAck(msg.GetHeader().SeqNr)
+		c.sequentialDataReader.Push(msg.(*messages.Data))
 	case messages.MessageTypeClose:
 		if !c.isConnOpen {
 			return ErrConnectionNotReady
@@ -572,7 +573,7 @@ runLoop:
 			}
 			_, err := c.retransmit(p)
 			if err != nil {
-				l.Warn("failed to retransmit", zap.Uint16("seq_nr", p.seqNr), zap.Error(err))
+				l.Warn("failed to retransmit", FSequenceNumber(p.seqNr), zap.Error(err))
 			}
 
 			if p.retransmits > 2 {
@@ -587,8 +588,8 @@ runLoop:
 func (c *Conn) processAck(h messages.PacketHeader) error {
 	l := c.logger
 
-	if packet, ok := c.inflightPackets[h.SeqNr]; ok {
-		delete(c.inflightPackets, h.SeqNr)
+	if packet, ok := c.inflightPackets[PacketNumber(h.SeqNr)]; ok {
+		delete(c.inflightPackets, PacketNumber(h.SeqNr))
 
 		c.rttMeasurement.Update(packet.transmissionTime, time.Now())
 		c.Options.CC.ReceivedAcks(1)
@@ -600,21 +601,8 @@ func (c *Conn) processAck(h messages.PacketHeader) error {
 			c.Options.CC.UpdateRTT(int(c.rttMeasurement.srtt))
 		}
 	} else {
-		l.Warn("got Ack for uknown packet", zap.Uint16("ack_seq_nr", h.SeqNr), zap.Uint16("cur_seq_nr", c.currentSeqNr))
+		l.Warn("got Ack for uknown packet", zap.Uint16("ack_seq_nr", h.SeqNr), FSequenceNumber(c.packetNumberGenerator.Peek()))
 	}
 
 	return nil
-}
-
-// generate a cryptographically secure initial sequence number
-// TODO: move somewhere else
-func randSeqNr() (uint16, error) {
-	var bytes [2]byte
-
-	_, err := rand.Read(bytes[:])
-	if err != nil {
-		return 0, err
-	}
-
-	return binary.LittleEndian.Uint16(bytes[:]), nil
 }

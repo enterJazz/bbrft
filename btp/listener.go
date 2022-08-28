@@ -69,11 +69,6 @@ func (l *Listener) recvConnFrom() (msg *messages.Conn, addr *net.UDPAddr, err er
 }
 
 func (ls *Listener) createConnResp(conn *net.UDPConn, req *messages.Conn) (resp *messages.ConnAck, err error) {
-	initSeqNr, err := randSeqNr()
-	if err != nil {
-		return
-	}
-
 	resp = &messages.ConnAck{
 		PacketHeader: messages.PacketHeader{
 			ProtocolType: ls.options.Version,
@@ -81,7 +76,6 @@ func (ls *Listener) createConnResp(conn *net.UDPConn, req *messages.Conn) (resp 
 			SeqNr:        req.SeqNr,
 			Flags:        2,
 		},
-		ServerSeqNr:        initSeqNr,
 		MigrationPort:      uint16(conn.LocalAddr().(*net.UDPAddr).Port),
 		ActualInitCwndSize: req.InitCwndSize,
 		ActualMaxCwndSize:  req.MaxCwndSize,
@@ -138,6 +132,10 @@ func (ls *Listener) doServerHandshake() (c *Conn, err error) {
 	if err != nil {
 		return
 	}
+	resp.ServerSeqNr = uint16(c.packetNumberGenerator.Peek())
+
+	// TODO: @wlad cleanup sequence number handling
+	c.sequentialDataReader.nextSeqNr = PacketNumber(req.SeqNr) + 1
 
 	buf, err := resp.Marshal()
 	if err != nil {
@@ -150,8 +148,6 @@ func (ls *Listener) doServerHandshake() (c *Conn, err error) {
 	if err != nil {
 		return nil, err
 	}
-
-	c.currentSeqNr = resp.ServerSeqNr
 
 	// start run loop
 	c.start()

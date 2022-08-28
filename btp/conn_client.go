@@ -13,14 +13,6 @@ func (c *Conn) initiateClientHandshake() (err error) {
 	if c.isConnOpen {
 		return errors.New("connection already open")
 	}
-
-	initSeqNr, err := randSeqNr()
-	if err != nil {
-		return
-	}
-
-	c.currentSeqNr = initSeqNr
-
 	req, err := c.createConnReq()
 	if err != nil {
 		return err
