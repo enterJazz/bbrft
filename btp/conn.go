@@ -169,8 +169,8 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 
 }
 
-// / Read() returns io.Err if channel closed and read buf cannot be filled completely
-// / returns num bytes read
+// Read() returns io.Err if channel closed and read buf cannot be filled completely
+// returns num bytes read
 func (c *Conn) Read(b []byte) (n int, err error) {
 	// TODO @robert
 	// reorder buffer / reordering

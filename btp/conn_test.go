@@ -1,6 +1,7 @@
 package btp
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -11,7 +12,9 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestConn(t *testing.T) {
+const testNetwork = "udp"
+
+func setupConn(t *testing.T) (cl_c, s_c *Conn) {
 	l, err := zap.NewDevelopment()
 	if err != nil {
 		t.Fatal("unable to initialize logger")
@@ -32,7 +35,7 @@ func TestConn(t *testing.T) {
 
 	go func() {
 		t.Log("waiting for incoming messages")
-		_, err := ls.Accept()
+		s_c, err = ls.Accept()
 		if err != nil {
 			t.Errorf("Accept error = %v", err)
 			return
@@ -47,7 +50,7 @@ func TestConn(t *testing.T) {
 		t.Errorf("client ResolveUDPAddr error = %v", err)
 		return
 	}
-	_, err = Dial(*NewDefaultOptions(l), clAddr, lAddr, l)
+	cl_c, err = Dial(*NewDefaultOptions(l), clAddr, lAddr, l)
 	if err != nil {
 		t.Errorf("Dial error = %v", err)
 		return
@@ -56,7 +59,35 @@ func TestConn(t *testing.T) {
 	for !ok {
 		time.Sleep(time.Millisecond * 100)
 	}
+	return
+}
 
+func TestConn(t *testing.T) {
+	cl_c, s_c := setupConn(t)
+	if cl_c != nil {
+		t.Errorf("test failed, client conn: %v", cl_c)
+	}
+	if s_c != nil {
+		t.Errorf("test failed, server conn: %v", s_c)
+	}
+}
+
+// tests simple read / write between connections
+func TestComm(t *testing.T) {
+	cl_c, s_c := setupConn(t)
+	test_payload := []byte{1, 2, 3, 4, 5, 6}
+	read_buf := make([]byte, len(test_payload))
+
+	if _, err := s_c.Write(test_payload); err != nil {
+		t.Errorf("Write() failed: %v", err)
+	}
+	if _, err := cl_c.Read(read_buf); err != nil {
+		t.Errorf("Read() failed: %v", err)
+	}
+
+	if !bytes.Equal(test_payload, read_buf) {
+		t.Errorf("Expected read_buf: %v, Got: %v", test_payload, read_buf)
+	}
 }
 
 func TestConnMultiple(t *testing.T) {
