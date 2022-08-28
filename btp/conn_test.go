@@ -111,7 +111,7 @@ func TestLargeComm(t *testing.T) {
 	if _, err := client.Read(readBuf); err != nil {
 		t.Errorf("Read() failed: %v", err)
 	}
-	fmt.Printf("Speed %f Mbit/Sec \n", float64(len(testPayload)/1024/1024)/(float64(time.Since(startTime))/float64(time.Second))*8)
+	fmt.Printf("Speed %.2f Mbit/Sec \n", float64(len(testPayload)/1024/1024)/(float64(time.Since(startTime))/float64(time.Second))*8)
 
 	if !bytes.Equal(testPayload, readBuf) {
 		t.Errorf("Buffers do not match")
