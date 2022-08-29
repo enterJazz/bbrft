@@ -15,7 +15,7 @@ import (
 const testNetwork = "udp"
 
 func setupConn(t *testing.T) (cl_c, s_c *Conn) {
-	l, err := zap.NewProduction()
+	l, err := zap.NewDevelopment()
 	if err != nil {
 		t.Fatal("unable to initialize logger")
 	}
@@ -93,14 +93,13 @@ func TestComm(t *testing.T) {
 // tests simple read / write between connections
 func TestLargeComm(t *testing.T) {
 	client, server := setupConn(t)
-	testPayload := make([]byte, 2*1024*1024)
+	testPayload := make([]byte, 10*1024*1024)
 	_, err := rand.Read(testPayload)
 	if err != nil {
 		t.Errorf("rand.Read() failed: %v", err)
 	}
 
 	readBuf := make([]byte, len(testPayload))
-	startTime := time.Now()
 
 	go func() {
 		if _, err := server.Write(testPayload); err != nil {
@@ -108,13 +107,71 @@ func TestLargeComm(t *testing.T) {
 		}
 	}()
 
+	startTime := time.Now()
 	if _, err := client.Read(readBuf); err != nil {
 		t.Errorf("Read() failed: %v", err)
 	}
-	fmt.Printf("Speed %.2f Mbit/Sec \n", float64(len(testPayload)/1024/1024)/(float64(time.Since(startTime))/float64(time.Second))*8)
+	fmt.Printf("Server -> Client transfer speed %.2f Mbit/Sec \n", float64(len(testPayload)/1024/1024)/(float64(time.Since(startTime))/float64(time.Second))*8)
 
 	if !bytes.Equal(testPayload, readBuf) {
 		t.Errorf("Buffers do not match")
+	}
+
+	go func() {
+		if _, err := client.Write(testPayload); err != nil {
+			t.Errorf("Write() failed: %v", err)
+		}
+	}()
+
+	startTime = time.Now()
+	if _, err := server.Read(readBuf); err != nil {
+		t.Errorf("Read() failed: %v", err)
+	}
+	fmt.Printf("Client -> Server transfer speed %.2f Mbit/Sec \n", float64(len(testPayload)/1024/1024)/(float64(time.Since(startTime))/float64(time.Second))*8)
+}
+
+func TestParallelDataTransfer(t *testing.T) {
+	client, server := setupConn(t)
+
+	testPayload1 := make([]byte, 20*1024)
+	testPayload2 := make([]byte, 20*1024)
+
+	clientReadBuf := make([]byte, len(testPayload1))
+	serverReadBuf := make([]byte, len(testPayload2))
+
+	clientReady := false
+	serverReady := false
+
+	go func() {
+		if _, err := server.Write(testPayload1); err != nil {
+			t.Errorf("server.Write() failed: %v", err)
+		}
+	}()
+
+	go func() {
+		if _, err := client.Write(testPayload2); err != nil {
+			t.Errorf("client.Write() failed: %v", err)
+		}
+	}()
+
+	go func() {
+		if _, err := server.Read(serverReadBuf); err != nil {
+			t.Errorf("server.Read() failed: %v", err)
+		}
+
+		serverReady = true
+	}()
+
+	go func() {
+		if _, err := server.Read(clientReadBuf); err != nil {
+			t.Errorf("client.Read() failed: %v", err)
+		}
+
+		clientReady = true
+	}()
+
+	for !serverReady && !clientReady {
+		time.Sleep(time.Millisecond * 100)
 	}
 }
 

@@ -71,8 +71,9 @@ type Conn struct {
 	// conn open is set if the connection has completed the handshake process
 	isConnOpen bool
 
-	txMu sync.Mutex
-	rxMu sync.Mutex
+	txMu  sync.Mutex
+	rxMu  sync.Mutex
+	ackMu sync.Mutex
 
 	// closeChan is used to notify the run loop that it should terminate
 	closeChan chan error
@@ -89,7 +90,6 @@ type Conn struct {
 	ctxCancel          context.CancelFunc
 	rttMeasurement     *RTTMeasurement
 
-	rxChan chan messages.Codable
 	txChan chan messages.Codable
 
 	sequentialDataReader  *sequentialDataReader
@@ -212,7 +212,6 @@ func newConn(conn *net.UDPConn, options ConnOptions, l *zap.Logger) *Conn {
 			conn.LocalAddr().String())),
 		inflightPackets: make(map[PacketNumber]*packet),
 		openChan:        make(chan error),
-		rxChan:          make(chan messages.Codable, options.MaxCwndSize),
 		txChan:          make(chan messages.Codable, options.MaxCwndSize),
 		// TODO: use some better buffer defaults
 		sequentialDataReader: NewDataReader(100, 50),
@@ -531,7 +530,10 @@ func (c *Conn) run() error {
 					// c.logger.Error("could not read msg", zap.Error(err))
 					continue
 				}
-				c.rxChan <- msg
+				err = c.onMessage(msg)
+				if err != nil {
+					l.Error("message handling error", zap.Error(err))
+				}
 			}
 		}
 	}()
@@ -544,11 +546,6 @@ runLoop:
 			l.Error("connection loop terminated", zap.Error(closeErr))
 			break runLoop
 
-		case msg := <-c.rxChan:
-			err := c.onMessage(msg)
-			if err != nil {
-				l.Error("message handling error", zap.Error(err))
-			}
 		default:
 		}
 
@@ -566,27 +563,41 @@ runLoop:
 			}
 		}
 
-		// check if packets need retransmission
-		for _, p := range c.inflightPackets {
-			if time.Since(p.transmissionTime) <= p.rtoDuration {
-				continue
-			}
-			_, err := c.retransmit(p)
-			if err != nil {
-				l.Warn("failed to retransmit", FSequenceNumber(p.seqNr), zap.Error(err))
-			}
-
-			if p.retransmits > 2 {
-				return errors.New("connection broken: too many retransmitts")
-			}
+		err := c.proccessRetransmission()
+		if err != nil {
+			return err
 		}
 	}
 
 	return closeErr
 }
 
+func (c *Conn) proccessRetransmission() error {
+	l := c.logger
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+
+	// check if packets need retransmission
+	for _, p := range c.inflightPackets {
+		if time.Since(p.transmissionTime) <= p.rtoDuration {
+			continue
+		}
+		_, err := c.retransmit(p)
+		if err != nil {
+			l.Warn("failed to retransmit", FSequenceNumber(p.seqNr), zap.Error(err))
+		}
+
+		if p.retransmits > 2 {
+			return errors.New("connection broken: too many retransmitts")
+		}
+	}
+	return nil
+}
+
 func (c *Conn) processAck(h messages.PacketHeader) error {
 	l := c.logger
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
 
 	if packet, ok := c.inflightPackets[PacketNumber(h.SeqNr)]; ok {
 		delete(c.inflightPackets, PacketNumber(h.SeqNr))
