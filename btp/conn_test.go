@@ -3,6 +3,7 @@ package btp
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"testing"
@@ -13,13 +14,178 @@ import (
 )
 
 const testNetwork = "udp"
+const mitmReadBufferCap = 2048
+const clientAddrStr = "127.0.0.1:9999"
+const serverAddrStr = "127.0.0.1:1337"
+const mitmClLAddrStr = "127.0.0.1:9000"
+const mitmSLAddrStr = "127.0.0.1:9001"
 
-func setupConn(t *testing.T) (cl_c, s_c *Conn) {
-	l, err := zap.NewDevelopment()
-	if err != nil {
-		t.Fatal("unable to initialize logger")
+// MitM relays messages between communicating parties, whereby it may drop and / or reorder packets
+type MitM struct {
+	t        *testing.T
+	clLAddr  *net.UDPAddr
+	sLAddr   *net.UDPAddr
+	clAddr   *net.UDPAddr
+	sAddr    *net.UDPAddr
+	clConn   *net.UDPConn
+	sConn    *net.UDPConn
+	dropProb float64 // probability of dropping a packet
+}
+
+func NewMitM(t *testing.T, clLAddrStr, sLAddrStr, clAddrStr, sAddrStr *string, dropProb float64) *MitM {
+	addrStrs := []*string{clLAddrStr, sLAddrStr, clAddrStr, sAddrStr}
+	udpAddrs := make([]*net.UDPAddr, len(addrStrs))
+	for i, addrStr := range addrStrs {
+		addr, err := net.ResolveUDPAddr(testNetwork, *addrStr)
+		if err != nil {
+			t.Errorf("ResolveUDPAddr error of %v = %v", addrStr, err)
+			return nil
+		}
+		udpAddrs[i] = addr
 	}
-	lAddr, err := net.ResolveUDPAddr(testNetwork, "127.0.0.1:1337")
+
+	if !(0 <= dropProb && dropProb <= 1) {
+		t.Errorf("dropProb must be between 0 and 1; got: %v", dropProb)
+	}
+
+	m := &MitM{
+		t:        t,
+		clLAddr:  udpAddrs[0],
+		sLAddr:   udpAddrs[1],
+		clAddr:   udpAddrs[2],
+		sAddr:    udpAddrs[3],
+		dropProb: dropProb,
+	}
+	go m.run()
+	return m
+}
+
+func (m *MitM) run() {
+	m.t.Logf("mitm connecting to %v from %v", m.sAddr, m.sLAddr)
+	// connect to server
+	sConn, err := net.DialUDP(testNetwork, m.sLAddr, m.sAddr)
+	if err != nil {
+		m.t.Errorf("Failed to connect to server: %v; retrying...", err)
+	}
+	m.sConn = sConn
+	// expect conn from client
+	m.t.Logf("mitm listening at %v", m.clLAddr)
+	clConn, err := net.ListenUDP(testNetwork, m.clLAddr)
+	if err != nil {
+		return
+	}
+	m.clConn = clConn
+	m.t.Logf("mitm connected to by %v", clConn)
+
+	go func() {
+		for {
+			err := m.probRelay(m.sAddr, true)
+			if err != nil {
+				m.t.Errorf("Relay error = %v", err)
+			}
+		}
+	}()
+	go func() {
+		for {
+			err := m.probRelay(m.clAddr, false)
+			if err != nil {
+				m.t.Errorf("Relay error = %v", err)
+			}
+		}
+	}()
+}
+
+func (m *MitM) probRelay(targetAddr *net.UDPAddr, connector bool) (err error) {
+	// read source message
+	buf := make([]byte, mitmReadBufferCap)
+	srcSock := m.getSrcSock(connector)
+	_, err = srcSock.Read(buf)
+	if err != nil {
+		return
+	}
+	m.t.Logf("Relaying packet from %v to %v", m.getSrcSock(connector).LocalAddr(), m.getTargetSock(connector).LocalAddr())
+
+	// TODO: @robert if ConnAck: also migrate mitm connection
+	h, err := messages.ParseHeader(buf)
+	if err != nil {
+		m.t.Errorf("error while parsing header: %v", err)
+		return
+	}
+
+	var msg messages.Codable
+	// instantiate object depending on header type
+	switch h.MessageType {
+	case messages.MessageTypeAck:
+		msg = &messages.Ack{}
+	case messages.MessageTypeConn:
+		msg = &messages.Conn{}
+	case messages.MessageTypeConnAck:
+		msg = &messages.ConnAck{}
+	case messages.MessageTypeData:
+		msg = &messages.Data{}
+	case messages.MessageTypeClose:
+		msg = &messages.Close{}
+	default:
+		m.t.Error("unexpected message type")
+	}
+
+	r := bytes.NewReader(buf[messages.HeaderSize:])
+	err = msg.Unmarshal(h, r)
+	if err != nil {
+		m.t.Errorf("Unmarshal() err: %v", err)
+	}
+
+	// migrate mitm connection from server connAck
+	switch h.MessageType {
+	case messages.MessageTypeConnAck:
+		connAck := msg.(*messages.ConnAck)
+		// close migrate mitm conn to server
+		sourceSock := m.getSrcSock(connector)
+		sourceSock.Close()
+		raddr := sourceSock.RemoteAddr().(*net.UDPAddr)
+		raddr.Port = int(connAck.MigrationPort)
+		m.t.Logf("mitm remigrating server conn to %v from %v", raddr, m.sLAddr)
+		newConn, err1 := net.DialUDP(testNetwork, m.sLAddr, raddr)
+		if err1 != nil {
+			m.t.Errorf("migration err: %v", err1)
+		}
+		m.sConn = newConn
+		// change migration port to this port (client - mitm remains unchanged)
+		connAck.MigrationPort = m.clLAddr.AddrPort().Port()
+		buf, err = connAck.Marshal()
+		if err != nil {
+			m.t.Errorf("Marshal() error: %v", err)
+		}
+	default:
+		// decide wether to drop
+		// TODO: @robert replace with Markov chain (OR only in final tests)
+		rand := rand.Float64()
+		if !(m.dropProb < rand) {
+			// drop packet
+			m.t.Logf("dropping packet: %v >= %v", m.dropProb, rand)
+			return
+		}
+	}
+
+	// forward packet to target
+	var n int
+	targetSock := m.getTargetSock(connector)
+	if connector {
+		n, err = targetSock.Write(buf)
+	} else {
+		n, err = targetSock.WriteToUDP(buf, targetAddr)
+	}
+	if err != nil {
+		return
+	}
+	if n != len(buf) {
+		return io.ErrShortWrite
+	}
+	return
+}
+
+func setupConn(t *testing.T, l *zap.Logger, sourceAddrStr, targetAddrStr *string) (cl_c, s_c *Conn) {
+	lAddr, err := net.ResolveUDPAddr(testNetwork, *targetAddrStr)
 	if err != nil {
 		t.Errorf("server ResolveUDPAddr error = %v", err)
 		return
@@ -45,7 +211,7 @@ func setupConn(t *testing.T) (cl_c, s_c *Conn) {
 		ok = true
 	}()
 
-	clAddr, err := net.ResolveUDPAddr(testNetwork, "127.0.0.1:9999")
+	clAddr, err := net.ResolveUDPAddr(testNetwork, *sourceAddrStr)
 	if err != nil {
 		t.Errorf("client ResolveUDPAddr error = %v", err)
 		return
@@ -62,8 +228,101 @@ func setupConn(t *testing.T) (cl_c, s_c *Conn) {
 	return
 }
 
+func (m *MitM) getSrcSock(connector bool) *net.UDPConn {
+	if connector {
+		return m.clConn
+	} else {
+		return m.sConn
+	}
+}
+
+func (m *MitM) getTargetSock(connector bool) *net.UDPConn {
+	return m.getSrcSock(!connector)
+}
+
+func setupDefaultConn(t *testing.T) (cl_c, s_c *Conn) {
+	l, err := zap.NewDevelopment()
+	if err != nil {
+		t.Fatal("unable to initialize logger")
+	}
+	manualClientAddrStr := clientAddrStr
+	manualServerAddrStr := serverAddrStr
+	return setupConn(t, l, &manualClientAddrStr, &manualServerAddrStr)
+}
+
+func setupLossyConn(t *testing.T, dropProb float64) (cl_c, s_c *Conn) {
+	l, err := zap.NewDevelopment()
+	if err != nil {
+		t.Fatal("unable to initialize logger")
+	}
+	manualMitmClLAddrStr := mitmClLAddrStr
+	manualMitmSLAddrStr := mitmSLAddrStr
+	manualClientAddrStr := clientAddrStr
+	manualServerAddrStr := serverAddrStr
+
+	// setup server
+	lAddr, err := net.ResolveUDPAddr(testNetwork, manualServerAddrStr)
+	if err != nil {
+		t.Errorf("server ResolveUDPAddr error = %v", err)
+		return
+	}
+	ls, err := Listen(*NewDefaultOptions(l), lAddr, l)
+	if err != nil {
+		t.Errorf("server Listen error = %v", err)
+		return
+	}
+
+	// use okay to wait for a connection
+	ok := false
+
+	go func() {
+		t.Log("waiting for incoming messages")
+		s_c, err = ls.Accept()
+		if err != nil {
+			t.Errorf("Accept error = %v", err)
+			return
+		}
+
+		t.Log("connection accepted")
+		ok = true
+	}()
+
+	// setup mitm
+	_ = NewMitM(t, &manualMitmClLAddrStr, &manualMitmSLAddrStr, &manualClientAddrStr, &manualServerAddrStr, dropProb)
+	mitmAddr, err := net.ResolveUDPAddr(testNetwork, manualMitmClLAddrStr)
+
+	// connect client to mitm
+	time.Sleep(time.Second * 1)
+	clAddr, err := net.ResolveUDPAddr(testNetwork, manualClientAddrStr)
+	if err != nil {
+		t.Errorf("client ResolveUDPAddr error = %v", err)
+		return
+	}
+	cl_c, err = Dial(*NewDefaultOptions(l), clAddr, mitmAddr, l)
+	if err != nil {
+		t.Errorf("Dial error = %v", err)
+		return
+	}
+
+	for !ok {
+		time.Sleep(time.Millisecond * 100)
+	}
+
+	return
+}
+
 func TestConn(t *testing.T) {
-	cl_c, s_c := setupConn(t)
+	cl_c, s_c := setupDefaultConn(t)
+	if cl_c == nil {
+		t.Errorf("test failed, client conn: %v", cl_c)
+	}
+	if s_c == nil {
+		t.Errorf("test failed, server conn: %v", s_c)
+	}
+}
+
+func TestLossyConn(t *testing.T) {
+	cl_c, s_c := setupLossyConn(t, 0)
 	if cl_c == nil {
 		t.Errorf("test failed, client conn: %v", cl_c)
 	}
@@ -74,7 +333,18 @@ func TestConn(t *testing.T) {
 
 // tests simple read / write between connections
 func TestComm(t *testing.T) {
-	cl_c, s_c := setupConn(t)
+	cl_c, s_c := setupDefaultConn(t)
+	testComm(t, cl_c, s_c)
+}
+
+// tests lossy read / write between connections
+func TestLossyComm(t *testing.T) {
+	dropProb := 0.1
+	cl_c, s_c := setupLossyConn(t, dropProb)
+	testComm(t, cl_c, s_c)
+}
+
+func testComm(t *testing.T, cl_c, s_c *Conn) {
 	test_payload := []byte{1, 2, 3, 4, 5, 6}
 	read_buf := make([]byte, len(test_payload))
 
@@ -90,10 +360,20 @@ func TestComm(t *testing.T) {
 	}
 }
 
-// tests simple read / write between connections
 func TestLargeComm(t *testing.T) {
-	client, server := setupConn(t)
-	testPayload := make([]byte, 10*1024*1024)
+	client, server := setupDefaultConn(t)
+	testLargeComm(t, client, server)
+}
+
+func TestLossyLargeComm(t *testing.T) {
+	dropProb := 0.01
+	client, server := setupLossyConn(t, dropProb)
+	testLargeComm(t, client, server)
+}
+
+// tests simple read / write between connections
+func testLargeComm(t *testing.T, client, server *Conn) {
+	testPayload := make([]byte, 2*1024*1024)
 	_, err := rand.Read(testPayload)
 	if err != nil {
 		t.Errorf("rand.Read() failed: %v", err)
@@ -131,7 +411,7 @@ func TestLargeComm(t *testing.T) {
 }
 
 func TestParallelDataTransfer(t *testing.T) {
-	client, server := setupConn(t)
+	client, server := setupDefaultConn(t)
 
 	testPayload1 := make([]byte, 20*1024)
 	testPayload2 := make([]byte, 20*1024)
