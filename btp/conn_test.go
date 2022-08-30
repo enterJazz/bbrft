@@ -22,17 +22,19 @@ const mitmSLAddrStr = "127.0.0.1:9001"
 
 // MitM relays messages between communicating parties, whereby it may drop and / or reorder packets
 type MitM struct {
-	t        *testing.T
-	clLAddr  *net.UDPAddr
-	sLAddr   *net.UDPAddr
-	clAddr   *net.UDPAddr
-	sAddr    *net.UDPAddr
-	clConn   *net.UDPConn
-	sConn    *net.UDPConn
-	dropProb float64 // probability of dropping a packet
+	t              *testing.T
+	clLAddr        *net.UDPAddr
+	sLAddr         *net.UDPAddr
+	clAddr         *net.UDPAddr
+	sAddr          *net.UDPAddr
+	clConn         *net.UDPConn
+	sConn          *net.UDPConn
+	dropProb       float64 // probability of dropping a packet
+	outOfOrderProb float64 // probability of sending packet (possibly) later
+	outOfOrderBuf  [][]byte
 }
 
-func NewMitM(t *testing.T, clLAddrStr, sLAddrStr, clAddrStr, sAddrStr *string, dropProb float64) *MitM {
+func NewMitM(t *testing.T, clLAddrStr, sLAddrStr, clAddrStr, sAddrStr *string, dropProb, outOfOrderProb float64) *MitM {
 	addrStrs := []*string{clLAddrStr, sLAddrStr, clAddrStr, sAddrStr}
 	udpAddrs := make([]*net.UDPAddr, len(addrStrs))
 	for i, addrStr := range addrStrs {
@@ -44,17 +46,22 @@ func NewMitM(t *testing.T, clLAddrStr, sLAddrStr, clAddrStr, sAddrStr *string, d
 		udpAddrs[i] = addr
 	}
 
-	if !(0 <= dropProb && dropProb <= 1) {
-		t.Errorf("dropProb must be between 0 and 1; got: %v", dropProb)
+	vals := []float64{dropProb, outOfOrderProb}
+	for _, v := range vals {
+		if !(0 <= v && v <= 1) {
+			t.Errorf("probability must be between 0 and 1; got: %v", v)
+		}
 	}
 
 	m := &MitM{
-		t:        t,
-		clLAddr:  udpAddrs[0],
-		sLAddr:   udpAddrs[1],
-		clAddr:   udpAddrs[2],
-		sAddr:    udpAddrs[3],
-		dropProb: dropProb,
+		t:              t,
+		clLAddr:        udpAddrs[0],
+		sLAddr:         udpAddrs[1],
+		clAddr:         udpAddrs[2],
+		sAddr:          udpAddrs[3],
+		dropProb:       dropProb,
+		outOfOrderProb: outOfOrderProb,
+		outOfOrderBuf:  make([][]byte, 2048),
 	}
 	go m.run()
 	return m
@@ -159,16 +166,44 @@ func (m *MitM) probRelay(targetAddr *net.UDPAddr, connector bool) (err error) {
 	default:
 		// decide wether to drop
 		// TODO: @robert replace with Markov chain (OR only in final tests)
-		rand := rand.Float64()
-		if !(m.dropProb < rand) {
+		randDrop := rand.Float64()
+		if !(m.dropProb < randDrop) {
 			// drop packet
-			m.t.Logf("dropping packet: %v >= %v", m.dropProb, rand)
+			m.t.Log("dropping packet")
+			return
+		}
+		randOutOfOrder := rand.Float64()
+		if !(m.outOfOrderProb < randOutOfOrder) {
+			m.t.Log("out-of-order packet: pushing to buf")
+			m.outOfOrderBuf = append(m.outOfOrderBuf, buf)
 			return
 		}
 	}
 
 	// forward packet to target
-	var n int
+	_, err = m.writeMitM(buf, targetAddr, connector)
+	if err != nil {
+		return
+	}
+
+	// if outOfOrderBuf non-empty, 80% chance to also send msg in buf
+	randOutOfOrderSend := rand.Float64()
+	if randOutOfOrderSend > 0.5 {
+		if len(m.outOfOrderBuf) != 0 {
+			m.t.Log("sending packet out-of-order")
+			extraSendBuf, newBuf := m.outOfOrderBuf[0], m.outOfOrderBuf[1:]
+			m.outOfOrderBuf = newBuf
+			_, err = m.writeMitM(extraSendBuf, targetAddr, connector)
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	return
+}
+
+func (m *MitM) writeMitM(buf []byte, targetAddr *net.UDPAddr, connector bool) (n int, err error) {
 	targetSock := m.getTargetSock(connector)
 	if connector {
 		n, err = targetSock.Write(buf)
@@ -179,7 +214,7 @@ func (m *MitM) probRelay(targetAddr *net.UDPAddr, connector bool) (err error) {
 		return
 	}
 	if n != len(buf) {
-		return io.ErrShortWrite
+		return n, io.ErrShortWrite
 	}
 	return
 }
@@ -250,7 +285,7 @@ func setupDefaultConn(t *testing.T) (cl_c, s_c *Conn) {
 	return setupConn(t, l, &manualClientAddrStr, &manualServerAddrStr)
 }
 
-func setupLossyConn(t *testing.T, dropProb float64) (cl_c, s_c *Conn) {
+func setupLossyConn(t *testing.T, dropProb, outOfOrderProb float64) (cl_c, s_c *Conn) {
 	l, err := zap.NewDevelopment()
 	if err != nil {
 		t.Fatal("unable to initialize logger")
@@ -288,7 +323,7 @@ func setupLossyConn(t *testing.T, dropProb float64) (cl_c, s_c *Conn) {
 	}()
 
 	// setup mitm
-	_ = NewMitM(t, &manualMitmClLAddrStr, &manualMitmSLAddrStr, &manualClientAddrStr, &manualServerAddrStr, dropProb)
+	_ = NewMitM(t, &manualMitmClLAddrStr, &manualMitmSLAddrStr, &manualClientAddrStr, &manualServerAddrStr, dropProb, outOfOrderProb)
 	mitmAddr, err := net.ResolveUDPAddr(testNetwork, manualMitmClLAddrStr)
 
 	// connect client to mitm
@@ -322,7 +357,7 @@ func TestConn(t *testing.T) {
 }
 
 func TestLossyConn(t *testing.T) {
-	cl_c, s_c := setupLossyConn(t, 0)
+	cl_c, s_c := setupLossyConn(t, 0, 0)
 	if cl_c == nil {
 		t.Errorf("test failed, client conn: %v", cl_c)
 	}
@@ -340,7 +375,8 @@ func TestComm(t *testing.T) {
 // tests lossy read / write between connections
 func TestLossyComm(t *testing.T) {
 	dropProb := 0.1
-	cl_c, s_c := setupLossyConn(t, dropProb)
+	outOfOrderProb := 0.1
+	cl_c, s_c := setupLossyConn(t, dropProb, outOfOrderProb)
 	testComm(t, cl_c, s_c)
 }
 
@@ -367,7 +403,8 @@ func TestLargeComm(t *testing.T) {
 
 func TestLossyLargeComm(t *testing.T) {
 	dropProb := 0.01
-	client, server := setupLossyConn(t, dropProb)
+	outOfOrderProb := 0.1
+	client, server := setupLossyConn(t, dropProb, outOfOrderProb)
 	testLargeComm(t, client, server)
 }
 
