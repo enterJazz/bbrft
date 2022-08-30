@@ -85,3 +85,7 @@ func (s *sequentialDataReader) String() string {
 	str += "]"
 	return str
 }
+
+func (s *sequentialDataReader) Close() {
+	close(s.dataChan)
+}

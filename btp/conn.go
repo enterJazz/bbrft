@@ -170,16 +170,6 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 // Read() returns io.Err if channel closed and read buf cannot be filled completely
 // returns num bytes read
 func (c *Conn) Read(b []byte) (n int, err error) {
-	// TODO @robert
-	// reorder buffer / reordering
-	// read + order dataChan
-	// returns Byte Stream!
-	// Issue: which component does what?
-
-	//	if !c.connOpen {
-	//		return 0, ErrConnectionNotRead
-	//	}
-
 	// assumption: dataChan ordered beforehand by flow ctrl
 	for c.readBuf.Len() < len(b) {
 		inPacket, err := c.sequentialDataReader.Next()
@@ -212,6 +202,7 @@ func newConn(conn *net.UDPConn, options ConnOptions, l *zap.Logger) *Conn {
 			conn.LocalAddr().String())),
 		inflightPackets: make(map[PacketNumber]*packet),
 		openChan:        make(chan error),
+		closeChan:       make(chan error),
 		txChan:          make(chan messages.Codable, options.MaxCwndSize),
 		// TODO: use some better buffer defaults
 		sequentialDataReader: NewDataReader(100, 50),
@@ -378,17 +369,19 @@ func (c *Conn) close(reason messages.CloseResons) error {
 	msg := &messages.Close{
 		PacketHeader: messages.PacketHeader{
 			ProtocolType: c.Options.Version,
-			MessageType:  messages.MessageTypeConn,
+			MessageType:  messages.MessageTypeClose,
 		},
 		Reason: reason,
 	}
 
-	_, err := c.send(msg)
+	// transmit directly as close must be sent before closing connection
+	_, err := c.transmit(msg)
 	if err != nil {
 		return err
 	}
 
-	return c.conn.Close()
+	c.closeChan <- nil
+	return nil
 }
 
 func (c *Conn) createConnReq() (req *messages.Conn, err error) {
@@ -502,8 +495,7 @@ func (c *Conn) onMessage(msg messages.Codable) error {
 			return ErrConnectionNotReady
 		}
 		c.sendAck(msg.GetHeader().SeqNr)
-
-		// TODO: handle close
+		c.closeChan <- nil
 	}
 
 	return nil
@@ -522,6 +514,7 @@ func (c *Conn) run() error {
 			select {
 			case <-c.ctx.Done():
 				l.Debug("stopping run loop")
+				c.isRunLoopRunning = false
 				return
 			default:
 				msg, err := c.recv()
@@ -544,6 +537,7 @@ runLoop:
 		select {
 		case closeErr = <-c.closeChan:
 			l.Error("connection loop terminated", zap.Error(closeErr))
+			c.teardown()
 			break runLoop
 
 		default:
@@ -616,4 +610,15 @@ func (c *Conn) processAck(h messages.PacketHeader) error {
 	}
 
 	return nil
+}
+
+// tears down connections resources
+func (c *Conn) teardown() {
+	if err := c.conn.Close(); err != nil {
+		c.logger.Error("failed to close UDP connection", zap.Error(err))
+	}
+	c.sequentialDataReader.Close()
+	close(c.openChan)
+	close(c.closeChan)
+	close(c.txChan)
 }

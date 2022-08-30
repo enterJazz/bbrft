@@ -546,6 +546,30 @@ func TestConnMultiple(t *testing.T) {
 
 }
 
+func TestCloseClient(t *testing.T) {
+	clientC, serverC := setupDefaultConn(t)
+	testCloseHelper(t, clientC, serverC)
+}
+
+func TestCloseServer(t *testing.T) {
+	clientC, serverC := setupDefaultConn(t)
+	testCloseHelper(t, serverC, clientC)
+}
+
+func testCloseHelper(t *testing.T, sourceC, targetC *Conn) {
+	if err := sourceC.Close(); err != nil {
+		t.Errorf("Close() failed = %v", err)
+	}
+	time.Sleep(time.Second * 3)
+	if sourceC.isRunLoopRunning {
+		t.Error("Closing run loop of close sender failed; run loop is still running")
+	}
+	if targetC.isRunLoopRunning {
+		t.Error("Closing run loop of close receiver failed; run loop is still running")
+	}
+
+}
+
 func TestRead(t *testing.T) {
 	l, err := zap.NewDevelopment()
 	if err != nil {
