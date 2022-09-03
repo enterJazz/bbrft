@@ -6,8 +6,6 @@ import (
 )
 
 type StartTransmission struct {
-	// TODO: Update to current RFC specs
-
 	StreamID uint16
 	// Checksum of the file to be downloaded, since it might have changed since the FileResp.
 	Checksum []byte

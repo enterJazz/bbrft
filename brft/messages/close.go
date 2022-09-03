@@ -22,11 +22,8 @@ const (
 )
 
 type Close struct {
-	// TODO: Update to current RFC specs
 	StreamID uint16
 	Reason   CloseReason
-
-	Raw []byte
 }
 
 func (m *Close) Encode(l *zap.Logger) []byte {
