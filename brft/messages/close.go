@@ -10,14 +10,15 @@ type CloseReason uint8
 const (
 	// TODO: Update to current RFC specs
 	CloseReasonUndefined CloseReason = iota
+	CloseReasonTransferComplete
 	CloseReasonChecksumInvalid
 	CloseReasonInvalidOffset
 	CloseReasonNotEnoughSpace
-	CloseReasonTimeout
 	CloseReasonInvalidFlags
 	CloseReasonResumeNoChecksum
-	CloseReasonInvalidChecksumAlgo
 	CloseReasonFileNotFound
+	CloseReasonUnsupportedOptionalHeader
+	CloseReasonUnexpectedOptionalHeader
 	// ...
 )
 

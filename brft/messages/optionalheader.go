@@ -17,8 +17,8 @@ const (
 	OptionalHeaderTypeCompressionReq
 	OptionalHeaderTypeCompressionResp
 
-	OptionalHeaderLengthCompressionReq  uint8 = 3
-	OptionalHeaderLengthCompressionResp uint8 = 2
+	OptionalHeaderLengthCompressionReq  uint8 = 3 // length without length field
+	OptionalHeaderLengthCompressionResp uint8 = 2 // length without length field
 )
 
 type OptionalHeader interface {
@@ -185,6 +185,16 @@ func (h *CompressionReqOptionalHeader) Decode(
 	}
 
 	return nil
+}
+
+// ChunkSize returns the requested chunk size according to the chunk size
+// multiplier. Ther formula is:
+// chunk_size = (chunk_size_multiplier + 1) ∗ 64kB
+func (h *CompressionReqOptionalHeader) ChunkSize() int {
+	if h == nil {
+		return 0
+	}
+	return (int(h.ChunkSizeMultiplier) + 1) * 64 * 1024
 }
 
 type CompressionRespHeaderStatus uint8
