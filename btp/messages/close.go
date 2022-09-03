@@ -61,3 +61,7 @@ func (p *Close) Unmarshal(h PacketHeader, r io.Reader) error {
 
 	return nil
 }
+
+func (p *Close) SetSeqNr(seqNr uint16) {
+	p.PacketHeader.SeqNr = seqNr
+}
