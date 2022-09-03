@@ -14,7 +14,7 @@ import (
 
 // TODO: Write test for marshal and unmarshal individually
 
-func TestFileReqMarshalUnmarshal(t *testing.T) {
+func TestFileRespMarshalUnmarshal(t *testing.T) {
 	l, err := zap.NewDevelopment()
 	if err != nil {
 		t.Fatalf("unable to initialize logger")
@@ -22,16 +22,17 @@ func TestFileReqMarshalUnmarshal(t *testing.T) {
 
 	tests := []struct {
 		name string
-		m    FileReq
+		m    FileResp
 		//want    []byte
 		wantErrMarshal   bool
 		wantErrUnmarshal bool
 	}{
 		// TODO: Add more test cases.
-		{"valid-1", FileReq{
-			FileName:   "some-filename",
+		{"valid-1", FileResp{
+			Status:     FileRespStatusOk,
 			OptHeaders: OptionalHeaders{},
-			Flags:      nil,
+			StreamID:   StreamID(12345),
+			FileSize:   uint64(1234567890),
 			Checksum:   make([]byte, common.ChecksumSize),
 		}, false, false},
 	}
@@ -39,20 +40,20 @@ func TestFileReqMarshalUnmarshal(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := tt.m.Marshal(l)
 			if (err != nil) != tt.wantErrMarshal {
-				t.Errorf("FileReq.Marshal() error = %v, wantErr %v", err, tt.wantErrMarshal)
+				t.Errorf("FileResp.Marshal() error = %v, wantErr %v", err, tt.wantErrMarshal)
 				return
 			}
 
 			fmt.Printf("message: %s\n", spew.Sdump(got))
 
-			// receiver stuff
-			m := new(FileReq)
+			// read again
+			m := new(FileResp)
 			r := bytes.NewReader(got)
 			s := cyberbyte.NewString(r, cyberbyte.DefaultTimeout)
 
 			err = m.Read(l, s)
 			if (err != nil) != tt.wantErrMarshal {
-				t.Fatalf("FileReq.Marshal() error = %v, wantErr %v", err, tt.wantErrMarshal)
+				t.Fatalf("FileResp.Marshal() error = %v, wantErr %v", err, tt.wantErrMarshal)
 			}
 
 			// compare the input and output
