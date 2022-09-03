@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"gitlab.lrz.de/bbrft/btp/congestioncontrol"
 	"gitlab.lrz.de/bbrft/btp/messages"
@@ -125,6 +126,78 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 	}
 
 	return 0, nil
+}
+
+// RemoteAddr returns the remote network address. The Addr returned is shared
+// by all invocations of RemoteAddr, so do not modify it.
+func (c *Conn) RemoteAddr() net.Addr {
+	return c.conn.RemoteAddr()
+}
+
+// LocalAddr returns the local network address. The Addr returned is shared by
+// all invocations of LocalAddr, so do not modify it.
+func (c *Conn) LocalAddr() net.Addr {
+	return c.conn.LocalAddr()
+}
+
+// TODO: accoring to our rfc the BRFT layer is not concerned with timeouts. maybe remove timeouts again
+// SetDeadline implements the Conn SetDeadline method.
+//
+// SetDeadline sets the read and write deadlines associated
+// with the connection. It is equivalent to calling both
+// SetReadDeadline and SetWriteDeadline.
+//
+// A deadline is an absolute time after which I/O operations
+// fail instead of blocking. The deadline applies to all future
+// and pending I/O, not just the immediately following call to
+// Read or Write. After a deadline has been exceeded, the
+// connection can be refreshed by setting a deadline in the future.
+//
+// If the deadline is exceeded a call to Read or Write or to other
+// I/O methods will return an error that wraps os.ErrDeadlineExceeded.
+// This can be tested using errors.Is(err, os.ErrDeadlineExceeded).
+// The error's Timeout method will return true, but note that there
+// are other possible errors for which the Timeout method will
+// return true even if the deadline has not been exceeded.
+//
+// An idle timeout can be implemented by repeatedly extending
+// the deadline after successful Read or Write calls.
+//
+// A zero value for t means I/O operations will not time out.
+func (c *Conn) SetDeadline(t time.Time) error {
+	if !c.connOpen {
+		return ErrConnectionNotRead
+	}
+
+	return c.conn.SetDeadline(t)
+}
+
+// SetReadDeadline implements the Conn SetReadDeadline method.
+//
+// SetReadDeadline sets the deadline for future Read calls
+// and any currently-blocked Read call.
+// A zero value for t means Read will not time out.
+func (c *Conn) SetReadDeadline(t time.Time) error {
+	if !c.connOpen {
+		return ErrConnectionNotRead
+	}
+
+	return c.conn.SetReadDeadline(t)
+}
+
+// SetWriteDeadline implements the Conn SetWriteDeadline method.
+//
+// SetWriteDeadline sets the deadline for future Write calls
+// and any currently-blocked Write call.
+// Even if write times out, it may return n > 0, indicating that
+// some of the data was successfully written.
+// A zero value for t means Write will not time out.
+func (c *Conn) SetWriteDeadline(t time.Time) error {
+	if !c.connOpen {
+		return ErrConnectionNotRead
+	}
+
+	return c.conn.SetWriteDeadline(t)
 }
 
 // Close will close a connection

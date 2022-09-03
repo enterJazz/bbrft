@@ -16,6 +16,9 @@ const (
 	OptionalHeaderTypeReserved OptionalHeaderType = iota
 	OptionalHeaderTypeCompressionReq
 	OptionalHeaderTypeCompressionResp
+
+	OptionalHeaderLengthCompressionReq  uint8 = 3
+	OptionalHeaderLengthCompressionResp uint8 = 2
 )
 
 type OptionalHeader interface {
@@ -185,6 +188,18 @@ type CompressionRespOptionalHeader struct {
 	Status CompressionRespHeaderStatus
 }
 
+func NewCompressionRespOptionalHeader(
+	s CompressionRespHeaderStatus,
+) *CompressionRespOptionalHeader {
+	return &CompressionRespOptionalHeader{
+		BaseOptionalHeader: BaseOptionalHeader{
+			Length: OptionalHeaderLengthCompressionResp,
+			Type:   OptionalHeaderTypeCompressionResp,
+		},
+		Status: s,
+	}
+}
+
 func (h *CompressionRespOptionalHeader) Marshal() ([]byte, error) {
 	if h == nil {
 		return nil, ErrOptionalHeaderNil
@@ -269,7 +284,7 @@ func readOptionalHeaders(l *zap.Logger, s *cyberbyte.String) (OptionalHeaders, e
 			return nil, ErrReceivedReservedOptionalHeader
 
 		case OptionalHeaderTypeCompressionReq:
-			// simply parse the header
+			// parse the header
 			h = new(CompressionReqOptionalHeader)
 			err := h.Read(s, *base)
 			if err != nil {
@@ -277,12 +292,7 @@ func readOptionalHeaders(l *zap.Logger, s *cyberbyte.String) (OptionalHeaders, e
 			}
 
 		case OptionalHeaderTypeCompressionResp:
-
-			l.Warn("received reserved optional header",
-				FOptionalHeaderType(base.Type),
-			)
-
-			// parse the header nonetheless and let the caller handle the actual logic TODO: caller check
+			// parse the header
 			h = new(CompressionRespOptionalHeader)
 			err := h.Read(s, *base)
 			if err != nil {

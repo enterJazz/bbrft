@@ -1,10 +1,10 @@
 package server
 
 import (
-	"crypto/sha1"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -15,19 +15,18 @@ var fileSignature = []byte{42, 52, 46, 54, 31} // "BRFT1" i.e. BRFT file version
 
 type File struct {
 	f        *os.File
-	id       []byte // TODO: probably SHA-1 of the filename?
+	stat     fs.FileInfo
 	name     string
 	basePath string
 	// checksum is the supposed checksum of the complete file
 	checksum []byte // TODO: probably SHA-256 in order to avoid collisions and attacks (?)
 }
 
+// FIXME: Make sure the name matches the regex
 func NewFile(
 	name string,
 	basePath string,
 ) (*File, error) {
-	// TODO: decide whether the file should be stored under it's human-readable or hashed name
-	// see if the file already exists. If so, load it otherwise create a new file
 	if _, err := os.Stat(filepath.Join(basePath, name)); errors.Is(err, os.ErrNotExist) {
 		// TODO: make the server check for the error!
 		return nil, err
@@ -41,6 +40,7 @@ func NewFile(
 		return nil, err
 	}
 
+	// TODO: would be probably nicer to store the checksum somewhere
 	// compute the checksum
 	checksum, err := common.ComputeChecksum(f)
 	if err != nil {
@@ -53,11 +53,14 @@ func NewFile(
 		return nil, fmt.Errorf("cannot reset file descriptor: %w", err)
 	}
 
-	id := sha1.Sum([]byte(name))
+	fs, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("cannot get file stats: %w", err)
+	}
 
 	return &File{
 		f:        f,
-		id:       id[:],
+		stat:     fs,
 		name:     name,
 		basePath: basePath,
 		checksum: checksum,
@@ -72,6 +75,10 @@ func (f *File) Read(b []byte) (n int, err error) {
 	return f.f.Read(b)
 }
 
-func (f *File) GetChecksum() []byte {
-	return f.checksum[:]
+func (f *File) Checksum() []byte {
+	return f.checksum
+}
+
+func (f *File) Size() uint64 {
+	return uint64(f.stat.Size())
 }

@@ -11,36 +11,7 @@ type BRFTMessage interface {
 	Read(l *zap.Logger, s *cyberbyte.String) error
 }
 
-// ProcolType defines the protocol type of the packet
-type ProtocolType uint8
-
-const (
-	ProtocolTypeBRFTv0 ProtocolType = (iota + 1) << 5 // 0010 0000
-	ProtocolTypeBRFTv1                                // 0100 0000
-	// 0110 0000 ...
-
-	ProtocolTypeMask ProtocolType = 0b11100000
-)
-
-// MessageType defines the type of message within the given protocol
-type MessageType uint8
-
-const (
-	MessageTypeFileReq MessageType = iota + 1
-	MessageTypeFileResp
-	MessageTypeData
-	MessageTypeStartTransmission
-	MessageTypeStopTransmission
-	MessageTypeMetaDataReq
-	MessageTypeMetaDataResp
-
-	MessageTypeMask MessageType = 0b00011111
-)
-
-type PacketHeader struct {
-	ProtocolType ProtocolType
-	MessageType  MessageType
-}
+type StreamID uint16
 
 // TODO: Maybe also create a cyberbyte.Builder
 func AddUint64(b *cryptobyte.Builder, v uint64) {

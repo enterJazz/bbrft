@@ -13,13 +13,25 @@ import (
 type FileRespStatus uint8
 
 const (
-	FileRespStatusUndefined FileRespStatus = iota
+	FileRespStatusReserved FileRespStatus = iota
 	FileRespStatusOk
 	FileRespStatusFileChanged
+	FileRespStatusUnsupportedOptionalHeader
+	FileRespStatusUnexpectedOptionalHeader
 	// ...
 )
 
-type StreamID uint16
+var fileRespStatusPrecedence = map[FileRespStatus]int{
+	FileRespStatusReserved:                  0,
+	FileRespStatusOk:                        1,
+	FileRespStatusFileChanged:               4,
+	FileRespStatusUnsupportedOptionalHeader: 2,
+	FileRespStatusUnexpectedOptionalHeader:  3,
+}
+
+func (s FileRespStatus) HasPrecedence(other FileRespStatus) bool {
+	return fileRespStatusPrecedence[s] > fileRespStatusPrecedence[other]
+}
 
 type FileResp struct {
 	Status     FileRespStatus
