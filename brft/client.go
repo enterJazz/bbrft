@@ -28,6 +28,8 @@ func Dial(
 		l:            l.With(log.FPeer("brft_client")), // extend logger
 		baseFilePath: downloadDir,                      // TODO: Make sure that it actually exists / create it
 		isClient:     true,
+		reqStreams:   make(map[string]stream),
+		streams:      make(map[messages.StreamID]stream),
 	}
 
 	raddr, err := net.ResolveUDPAddr("udp", addr)
@@ -36,7 +38,7 @@ func Dial(
 	}
 
 	// TODO: Figure out options
-	c.conn, err = btp.Dial(btp.ConnOptions{}, nil, raddr, l)
+	c.conn, err = btp.Dial(*btp.NewDefaultOptions(l), nil, raddr, l)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create connection: %w", err)
 	}

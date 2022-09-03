@@ -46,9 +46,9 @@ type FileReq struct {
 	Checksum []byte
 }
 
-func (m *FileReq) baseHeaderLen() int {
+func (m *FileReq) baseSize() int {
 	// flags + file name length
-	return 1 + 1
+	return 1 + 1 + len([]byte(m.FileName)) + common.ChecksumSize
 }
 
 func (m *FileReq) Encode(l *zap.Logger) ([]byte, error) {
@@ -72,8 +72,7 @@ func (m *FileReq) Encode(l *zap.Logger) ([]byte, error) {
 	}
 
 	// determine the length of the output
-	outLen := m.baseHeaderLen() + len(optHeaderBytes) + len([]byte(fileName)) + common.ChecksumSize
-	b := cryptobyte.NewFixedBuilder(make([]byte, 0, outLen))
+	b := NewFixedBRFTMessageBuilderWithExtra(m, len(optHeaderBytes))
 
 	// combine the flags
 	var flags FileReqFlag

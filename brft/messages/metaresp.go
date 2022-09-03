@@ -4,12 +4,15 @@ import (
 	"errors"
 	"fmt"
 
-	"golang.org/x/crypto/cryptobyte"
+	"gitlab.lrz.de/bbrft/cyberbyte"
+	"go.uber.org/zap"
 )
 
 type MetaResp struct {
 	// Items are the items for all the requested files
 	Items []MetaItem
+
+	isExtended bool
 }
 
 // NewMetaResp creates a new MetaResp. The number of items will be deeduced from the items. NOTE that the maximum number
@@ -26,8 +29,12 @@ func NewMetaResp(items []MetaItem) (*MetaResp, error) {
 	}, nil
 }
 
-func (m *MetaResp) Marshal() ([]byte, error) {
+func (m *MetaResp) baseSize() int {
+	// FIXME: wlad how large is this
+	return 0
+}
 
+func (m *MetaResp) Encode(l *zap.Logger) ([]byte, error) {
 	// again, make sure that there are not too many items
 	numItems := len(m.Items)
 	if numItems > 255 {
@@ -36,7 +43,7 @@ func (m *MetaResp) Marshal() ([]byte, error) {
 
 	bytes := make([]byte, 0, len(m.Items)*40) // some guess about the average item size
 	for _, item := range m.Items {
-		b, err := item.Marshal()
+		b, err := item.Encode()
 		if err != nil {
 			return nil, fmt.Errorf("unable to marshal item: %s", err)
 		}
@@ -44,8 +51,7 @@ func (m *MetaResp) Marshal() ([]byte, error) {
 		bytes = append(bytes, b...)
 	}
 
-	outLen := 1 + len(bytes)
-	b := cryptobyte.NewFixedBuilder(make([]byte, 0, outLen))
+	b := NewFixedBRFTMessageBuilderWithExtra(m, len(bytes)-m.baseSize())
 
 	b.AddUint8(uint8(numItems))
 	b.AddBytes(bytes)
@@ -53,11 +59,10 @@ func (m *MetaResp) Marshal() ([]byte, error) {
 	return b.Bytes()
 }
 
-func (m *MetaResp) Unmarshal(data []byte, extended bool) error {
-	s := cryptobyte.String(data)
+func (m *MetaResp) Decode(l *zap.Logger, s *cyberbyte.String) error {
 
 	var numItems uint8
-	if !s.ReadUint8(&numItems) {
+	if err := s.ReadUint8(&numItems); err != nil {
 		return ErrReadFailed
 	}
 
@@ -66,7 +71,7 @@ func (m *MetaResp) Unmarshal(data []byte, extended bool) error {
 	items := make([]MetaItem, 0, numItems)
 	for i := 0; i < int(numItems); i++ {
 		item := &MetaItem{}
-		err := item.UnmarshalWithString(&s, extended)
+		err := item.UnmarshalWithString(s, m.isExtended)
 		if err != nil {
 			return fmt.Errorf("unabel to unmarshal item: %s", err)
 		}
@@ -76,4 +81,8 @@ func (m *MetaResp) Unmarshal(data []byte, extended bool) error {
 
 	m.Items = items
 	return nil
+}
+
+func (m *MetaResp) SetExtended(val bool) {
+	m.isExtended = val
 }

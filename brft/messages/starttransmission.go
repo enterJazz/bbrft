@@ -6,7 +6,6 @@ import (
 	"gitlab.lrz.de/bbrft/brft/common"
 	"gitlab.lrz.de/bbrft/cyberbyte"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/cryptobyte"
 )
 
 type StartTransmission struct {
@@ -17,13 +16,13 @@ type StartTransmission struct {
 	Offset uint64
 }
 
-func (m *StartTransmission) baseHeaderLen() int {
+func (m *StartTransmission) baseSize() int {
 	// flags + file name length
 	return 2 + common.ChecksumSize + 8
 }
 
 func (m *StartTransmission) Encode(l *zap.Logger) ([]byte, error) {
-	b := cryptobyte.NewFixedBuilder(make([]byte, 0, m.baseHeaderLen()))
+	b := NewFixedBRFTMessageBuilder(m)
 
 	b.AddUint16(uint16(m.StreamID))
 	b.AddBytes(m.Checksum)

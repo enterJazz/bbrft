@@ -5,7 +5,6 @@ import (
 
 	"gitlab.lrz.de/bbrft/cyberbyte"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/cryptobyte"
 )
 
 type CloseReason uint8
@@ -29,13 +28,12 @@ type Close struct {
 	Reason   CloseReason
 }
 
-func (m *Close) baseHeaderLen() int {
+func (m *Close) baseSize() int {
 	return 2 + 1
 }
 
 func (m *Close) Encode(l *zap.Logger) ([]byte, error) {
-	b := cryptobyte.NewFixedBuilder(make([]byte, 0, m.baseHeaderLen()))
-
+	b := NewFixedBRFTMessageBuilder(m)
 	b.AddUint16(uint16(m.StreamID))
 	b.AddUint8(uint8(m.Reason))
 	return b.Bytes()

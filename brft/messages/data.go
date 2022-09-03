@@ -5,7 +5,6 @@ import (
 
 	"gitlab.lrz.de/bbrft/cyberbyte"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/cryptobyte"
 )
 
 type Data struct {
@@ -14,13 +13,13 @@ type Data struct {
 	Data []byte
 }
 
-func (m *Data) baseHeaderLen() int {
+func (m *Data) baseSize() int {
 	// streamID + length of payload
-	return 2 + 3
+	return 2 + 3 + len(m.Data)
 }
 
 func (m *Data) Encode(l *zap.Logger) ([]byte, error) {
-	b := cryptobyte.NewFixedBuilder(make([]byte, 0, m.baseHeaderLen()+len(m.Data)))
+	b := NewFixedBRFTMessageBuilder(m)
 
 	b.AddUint16(uint16(m.StreamID))
 	b.AddUint24(uint32(len(m.Data)))
