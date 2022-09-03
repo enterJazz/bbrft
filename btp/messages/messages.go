@@ -158,9 +158,10 @@ func ParseHeader(buf []byte) (h PacketHeader, err error) {
 	if h.ProtocolType != ProtocolVersionBTPv1 {
 		err = NewDecodeError("protocol version missmatch")
 		if h.ProtocolType != ProtocolVersionBTPv1 {
-		err = NewDecodeError("protocol version missmatch")
-		return
+			err = NewDecodeError("protocol version missmatch")
+			return
 		}
+	}
 
 	return
 }
