@@ -1,6 +1,9 @@
 package messages
 
-import "io"
+import (
+	"gitlab.lrz.de/bbrft/cyberbyte"
+	"go.uber.org/zap"
+)
 
 type Data struct {
 	// NOTE: The whole message has to be length delimeted in order to know how many bytes the receiver is supposed to read
@@ -12,16 +15,12 @@ type Data struct {
 	Raw []byte
 }
 
-func (m *Data) Marshal() ([]byte, error) {
-
+func (m *Data) Encode(l *zap.Logger) ([]byte, error) {
+	// TODO: Implement
 	return nil, nil
 }
 
-func (m *Data) Unmarshal([]byte) error {
+func (m *Data) Decode(l *zap.Logger, s *cyberbyte.String) error {
+	// TODO: Implement
 	return nil
-}
-
-func (m *Data) GetLength(io.Reader) int {
-	// TODO: Read the length from the reader
-	return 0
 }

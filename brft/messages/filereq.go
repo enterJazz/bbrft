@@ -51,7 +51,7 @@ func (m *FileReq) baseHeaderLen() int {
 	return 1 + 1
 }
 
-func (m *FileReq) Marshal(l *zap.Logger) ([]byte, error) {
+func (m *FileReq) Encode(l *zap.Logger) ([]byte, error) {
 	if len(m.Checksum) == 0 {
 		l.Warn("unset checksum, initializing with zeros<")
 		m.Checksum = make([]byte, common.ChecksumSize)
@@ -100,7 +100,7 @@ func (m *FileReq) Marshal(l *zap.Logger) ([]byte, error) {
 	return b.Bytes()
 }
 
-func (m *FileReq) Read(l *zap.Logger, s *cyberbyte.String) error {
+func (m *FileReq) Decode(l *zap.Logger, s *cyberbyte.String) error {
 	// TODO: hand over the cyberbyte.String instead. This way we can easily
 	//		adapt the timeout when the RTT changes (i.e. reuse the same
 	// 		cyberbyte.String and maybe also set a timeout field on it)

@@ -50,7 +50,7 @@ func (m *FileResp) baseHeaderLen() int {
 	return 1 + 2 + 8
 }
 
-func (m *FileResp) Marshal(l *zap.Logger) ([]byte, error) {
+func (m *FileResp) Encode(l *zap.Logger) ([]byte, error) {
 	if len(m.Checksum) != common.ChecksumSize {
 		return nil, errors.New("invalid checksum length")
 	}
@@ -78,7 +78,7 @@ func (m *FileResp) Marshal(l *zap.Logger) ([]byte, error) {
 	return b.Bytes()
 }
 
-func (m *FileResp) Read(l *zap.Logger, s *cyberbyte.String) error {
+func (m *FileResp) Decode(l *zap.Logger, s *cyberbyte.String) error {
 	// read the status
 	var status uint8
 	if err := s.ReadUint8(&status); err != nil {

@@ -19,7 +19,8 @@ func (pt Version) Valid() bool {
 type MessageType uint8
 
 const (
-	MessageTypeFileReq MessageType = iota + 1
+	MessageTypeFileReserved MessageType = iota
+	MessageTypeFileReq
 	MessageTypeFileResp
 	MessageTypeData
 	MessageTypeStartTransmission

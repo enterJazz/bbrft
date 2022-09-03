@@ -7,8 +7,9 @@ import (
 )
 
 type BRFTMessage interface {
-	Marshal(l *zap.Logger) ([]byte, error)
-	Read(l *zap.Logger, s *cyberbyte.String) error
+	Encode(l *zap.Logger) ([]byte, error)
+	// Decode actually reads the bytes from the *cyberbyte.String and decodes them
+	Decode(l *zap.Logger, s *cyberbyte.String) error
 }
 
 type StreamID uint16
