@@ -32,11 +32,9 @@ func (m *StartTransmission) Encode(l *zap.Logger) ([]byte, error) {
 }
 
 func (m *StartTransmission) Decode(l *zap.Logger, s *cyberbyte.String) error {
-	var streamID uint16
-	if err := s.ReadUint16(&streamID); err != nil {
-		return fmt.Errorf("unable to read flags: %w", err)
+	if err := s.ReadUint16((*uint16)(&m.StreamID)); err != nil {
+		return fmt.Errorf("unable to read StreamID: %w", err)
 	}
-	m.StreamID = StreamID(streamID)
 
 	if err := s.ReadBytes(&m.Checksum, common.ChecksumSize); err != nil {
 		return fmt.Errorf("unable to read checksum: %w", err)
