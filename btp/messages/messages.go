@@ -137,7 +137,6 @@ func ReadHeader(r io.Reader) (h PacketHeader, err error) {
 
 func ParseHeader(buf []byte) (h PacketHeader, err error) {
 	var t uint8
-	var t uint8
 
 	s := cryptobyte.String(buf)
 	ok := s.ReadUint8(&t)
