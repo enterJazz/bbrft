@@ -13,8 +13,8 @@ const (
 	VersionMask uint8 = 0b11100000
 )
 
-func (pt Version) Valid() bool {
-	return pt == VersionBRFTv0
+func (v Version) Valid() bool {
+	return v == VersionBRFTv0
 }
 
 // MessageType defines the type of message within the given protocol

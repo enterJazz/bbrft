@@ -1,6 +1,7 @@
 package brft
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/davecgh/go-spew/spew"
@@ -61,8 +62,8 @@ func (c *Conn) CloseStream(
 		c.streamsMu.Lock()
 		if _, ok := c.streams[*sid]; !ok {
 			c.l.Warn("stream not found in streams",
-				zap.String("streams", spew.Sdump(c.streams)),
-				zap.String("requested_streams", spew.Sdump(c.reqStreams)),
+				zap.String("streams", spew.Sdump("\n", c.streams)),
+				zap.String("requested_streams", spew.Sdump("\n", c.reqStreams)),
 				zap.Uint16("stream_id", uint16(*sid)),
 			)
 		} else {
@@ -104,7 +105,11 @@ func (c *Conn) readHeader() (messages.PacketHeader, error) {
 	// determine the message version and type
 	h := messages.NewPacketHeader(b[0])
 	if !h.Version.Valid() {
-		c.l.Error("unsupported header protocol version")
+		c.l.Error("unsupported header protocol version",
+			zap.String("header_raw", fmt.Sprintf("%08b", uint8(b[0]))),
+			zap.Uint8("version", uint8(h.Version)),
+			zap.Uint8("type", uint8(h.MessageType)),
+		)
 		errClose := c.Close()
 		if errClose != nil {
 			c.l.Error("unable to close connection", zap.Error(errClose))

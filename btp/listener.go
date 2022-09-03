@@ -150,7 +150,10 @@ func (ls *Listener) doServerHandshake() (c *Conn, err error) {
 	}
 
 	// start run loop
-	c.start()
+	err = c.start()
+	if err != nil {
+		return nil, err
+	}
 
 	l.Debug("waiting for client response")
 	openErr := <-c.openChan

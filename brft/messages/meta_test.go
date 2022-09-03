@@ -47,7 +47,7 @@ func TestMetaReqMarshalUnmarshal(t *testing.T) {
 
 			// compare the input and output
 			if !reflect.DeepEqual(*m, tt.m) {
-				t.Errorf("MetaReq-Unmarshal = %v, want %v", spew.Sdump(*m), spew.Sdump(tt.m))
+				t.Errorf("MetaReq-Unmarshal = %v, want %v", spew.Sdump("\n", *m), spew.Sdump("\n", tt.m))
 			}
 		})
 	}
@@ -93,7 +93,7 @@ func TestMetaItemMarshalUnmarshal(t *testing.T) {
 
 			// compare the input and output
 			if !reflect.DeepEqual(*m, tt.m) {
-				t.Errorf("MetaItem-Unmarshal = %v, want %v", spew.Sdump(*m), spew.Sdump(tt.m))
+				t.Errorf("MetaItem-Unmarshal = %v, want %v", spew.Sdump("\n", *m), spew.Sdump("\n", tt.m))
 			}
 		})
 	}
@@ -177,7 +177,7 @@ func TestMetaRespMarshalUnmarshal(t *testing.T) {
 
 			// compare the input and output
 			if !reflect.DeepEqual(*m, tt.m) {
-				t.Errorf("MetaResp-Unmarshal = %v, want %v", spew.Sdump(*m), spew.Sdump(tt.m))
+				t.Errorf("MetaResp-Unmarshal = %v, want %v", spew.Sdump("\n", *m), spew.Sdump("\n", tt.m))
 			}
 		})
 	}

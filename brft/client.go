@@ -29,7 +29,7 @@ func Dial(
 		l:          l.With(log.FPeer("brft_client")),
 		basePath:   downloadDir, // TODO: Make sure that it actually exists / create it
 		isClient:   true,
-		streams:    make(map[messages.StreamID]stream),
+		streams:    make(map[messages.StreamID]stream, 100),
 		reqStreams: make([]stream, 0, 25),
 	}
 
@@ -38,13 +38,11 @@ func Dial(
 		return nil, fmt.Errorf("unable to resolve server address: %w", err)
 	}
 
-	// TODO: Figure out options
 	c.conn, err = btp.Dial(*btp.NewDefaultOptions(l), nil, raddr, l)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create connection: %w", err)
 	}
 
-	// TODO: Add a loop that handles incomming files
 	go c.handleClientConnection()
 
 	return c, nil
@@ -105,6 +103,11 @@ func (c *Conn) DownloadFile(
 	if err != nil {
 		return fmt.Errorf("unable to encode FileRequest: %w", err)
 	}
+
+	s.l.Debug("sending FileRequest",
+		zap.String("packet", spew.Sdump("\n", req)),
+		zap.String("packet_encoded", spew.Sdump("\n", data)),
+	)
 
 	// We need to ensure that all FileRequests are sent to the server in the
 	// same order as they are added to the reqStreams slice in order to be able
@@ -218,7 +221,7 @@ func (c *Conn) handleClientTransferNegotiation() error {
 	c.reqStreamsMu.Lock()
 	if len(c.reqStreams) < 1 {
 		c.l.Error("no file request found for FileResponse message",
-			zap.String("requested_streams", spew.Sdump(c.reqStreams)),
+			zap.String("requested_streams", spew.Sdump("\n", c.reqStreams)),
 		)
 
 		// close the stream, but keep the connection open
@@ -246,8 +249,8 @@ func (c *Conn) handleClientTransferNegotiation() error {
 		!bytes.Equal(s.requestedChecksum, s.f.Checksum()) {
 		// TODO: potentially add a dialogue to allow the resumption of the download
 		s.l.Error("checksums do not match",
-			zap.String("requestedChecksum", spew.Sdump(s.requestedChecksum)),
-			zap.String("checksum", spew.Sdump(s.f.Checksum())),
+			zap.String("requestedChecksum", spew.Sdump("\n", s.requestedChecksum)),
+			zap.String("checksum", spew.Sdump("\n", s.f.Checksum())),
 		)
 
 		// close the stream, but keep the connection open
@@ -277,7 +280,7 @@ func (c *Conn) handleClientTransferNegotiation() error {
 			}
 		case *messages.CompressionReqOptionalHeader:
 			c.l.Error("got an unexpected optional header type",
-				zap.String("dump", spew.Sdump(opt)),
+				zap.String("dump", spew.Sdump("\n", opt)),
 			)
 
 			// close the stream, but keep the connection open
@@ -288,7 +291,7 @@ func (c *Conn) handleClientTransferNegotiation() error {
 
 		case *messages.UnknownOptionalHeader:
 			c.l.Error("got an unkown optional header type",
-				zap.String("dump", spew.Sdump(opt)),
+				zap.String("dump", spew.Sdump("\n", opt)),
 			)
 
 			// close the stream, but keep the connection open
@@ -299,7 +302,7 @@ func (c *Conn) handleClientTransferNegotiation() error {
 
 		default:
 			c.l.Error("unexpected optional header type [implementation error]",
-				zap.String("dump", spew.Sdump(opt)),
+				zap.String("dump", spew.Sdump("\n", opt)),
 			)
 
 			// close the stream, but keep the connection open
@@ -315,7 +318,7 @@ func (c *Conn) handleClientTransferNegotiation() error {
 	if err != nil {
 		c.l.Error("unable to initialize file",
 			zap.String("base_path", c.basePath),
-			zap.String("s.checksum", spew.Sdump(resp.Checksum)),
+			zap.String("s.checksum", spew.Sdump("\n", resp.Checksum)),
 			zap.Error(err),
 		)
 		// close the stream, but keep the connection open
@@ -342,7 +345,7 @@ func (c *Conn) handleClientTransferNegotiation() error {
 	data, err := st.Encode(s.l)
 	if err != nil {
 		c.l.Error("unanable to encode StartTransmission",
-			zap.String("packet", spew.Sdump(st)),
+			zap.String("packet", spew.Sdump("\n", st)),
 			zap.Error(err),
 		)
 		// close the stream, but keep the connection open
@@ -351,6 +354,12 @@ func (c *Conn) handleClientTransferNegotiation() error {
 		c.CloseStream(nil, messages.CloseReasonUndefined)
 		return nil
 	}
+
+	s.l.Debug("sending StartTransmission",
+		zap.String("file_response", spew.Sdump("\n", resp)),
+		zap.String("packet", spew.Sdump("\n", st)),
+		zap.String("packet_encoded", spew.Sdump("\n", data)),
+	)
 
 	_, err = c.conn.Write(data)
 	if err != nil {

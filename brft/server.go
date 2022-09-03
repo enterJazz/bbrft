@@ -76,6 +76,7 @@ func (s *Server) ListenAndServe() error {
 			conn:     conn,
 			basePath: s.basePath,
 			isClient: false,
+			streams:  make(map[messages.StreamID]stream, 100),
 		}
 
 		// handle the connection
@@ -118,7 +119,21 @@ func (c *Conn) handleServerConnection() {
 			}
 		case messages.MessageTypeStartTransmission:
 			// TODO: handle the packet and start transmitting data packets (concurrently?)
+			err := c.handleServerTransmissionStart()
+			if err != nil {
+				c.l.Error("unable to handle FileRequest - closing connection",
+					zap.Error(err),
+				)
 
+				errClose := c.Close()
+				if errClose != nil {
+					c.l.Error("error while closing connection", zap.Error(errClose))
+				}
+				return
+			}
+
+			// TODO: Remove
+			return
 		case messages.MessageTypeClose:
 			// TODO: Close the stream, but not the connection
 
@@ -184,12 +199,14 @@ func (c *Conn) handleServerTransferNegotiation() error {
 	// find the requested file
 	stream.f, err = OpenFile(req.FileName, c.basePath)
 	if errors.Is(err, os.ErrNotExist) {
+		l.Error("file does not exists - closing stream")
 		// close the stream, but keep the connection open
 		// NOTE: The stream object has not yet been added to c.streams
 		// (i.e. no cleanup needed)
 		c.CloseStream(nil, messages.CloseReasonFileNotFound)
 		return nil
 	} else if err != nil {
+		l.Error("unable to open file - closing stream", zap.Error(err))
 		// close the stream, but keep the connection open
 		// NOTE: The stream object has not yet been added to c.streams
 		// (i.e. no cleanup needed)
@@ -257,7 +274,7 @@ func (c *Conn) handleServerTransferNegotiation() error {
 
 		case *messages.CompressionRespOptionalHeader:
 			c.l.Error("got an unexpected optional header type",
-				zap.String("dump", spew.Sdump(opt)),
+				zap.String("dump", spew.Sdump("\n", opt)),
 			)
 			// adjust the status
 			if messages.FileRespStatusUnexpectedOptionalHeader.HasPrecedence(resp.Status) {
@@ -270,7 +287,7 @@ func (c *Conn) handleServerTransferNegotiation() error {
 			// without the option
 		case *messages.UnknownOptionalHeader:
 			c.l.Error("got an unkown optional header type",
-				zap.String("dump", spew.Sdump(opt)),
+				zap.String("dump", spew.Sdump("\n", opt)),
 			)
 			// adjust the status, but keep the stream open
 			if messages.FileRespStatusUnsupportedOptionalHeader.HasPrecedence(resp.Status) {
@@ -281,7 +298,7 @@ func (c *Conn) handleServerTransferNegotiation() error {
 			// without the option
 		default:
 			c.l.Error("unexpected optional header type [implementation error]",
-				zap.String("dump", spew.Sdump(opt)),
+				zap.String("dump", spew.Sdump("\n", opt)),
 			)
 			// actually close the stream since something went wrong on our
 			// side, but keep the connection open
@@ -302,7 +319,7 @@ func (c *Conn) handleServerTransferNegotiation() error {
 	data, err := resp.Encode(l)
 	if err != nil {
 		c.l.Error("unanable to encode FileResponse",
-			zap.String("packet", spew.Sdump(resp)),
+			zap.String("packet", spew.Sdump("\n", resp)),
 			zap.Error(err),
 		)
 		// close the stream, but keep the connection open
@@ -311,6 +328,12 @@ func (c *Conn) handleServerTransferNegotiation() error {
 		c.CloseStream(nil, messages.CloseReasonUndefined)
 		return nil
 	}
+
+	stream.l.Debug("sending FileResponse",
+		zap.String("file_request", spew.Sdump("\n", req)),
+		zap.String("packet", spew.Sdump("\n", resp)),
+		zap.String("packet_encoded", spew.Sdump("\n", data)),
+	)
 
 	_, err = c.conn.Write(data)
 	if err != nil {
@@ -322,6 +345,38 @@ func (c *Conn) handleServerTransferNegotiation() error {
 	c.streamsMu.Lock()
 	c.streams[stream.id] = stream
 	c.streamsMu.Unlock()
+
+	return nil
+}
+
+func (c *Conn) handleServerTransmissionStart() error {
+	// read the start transmission
+	st := new(messages.StartTransmission)
+
+	// TODO: probably remove the timeout
+	//			- I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
+	// TODO: probably create one cyberbyte string for the whole connection
+	err := st.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
+	if err != nil {
+		return fmt.Errorf("unanable to decode FileRequest: %w", err)
+	}
+
+	// TODO: it's not really nice to always block the whole stream
+	c.streamsMu.RLock()
+	defer c.streamsMu.RUnlock()
+	s, ok := c.streams[st.StreamID]
+	if !ok {
+		c.CloseStream(&st.StreamID, messages.CloseReasonUndefined)
+		return nil
+	}
+	// remove the stream from the requested ones
+
+	// TODO: actually start transmission
+	s.l.Debug("start sending data packets",
+		zap.String("start_transmission", spew.Sdump("\n", st)),
+		//TODO:  zap.String("packet", spew.Sdump("\n",resp)),
+		// TODO: zap.String("packet_encoded", spew.Sdump("\n",data)),
+	)
 
 	return nil
 }

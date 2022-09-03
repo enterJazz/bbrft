@@ -3,9 +3,12 @@ package brft
 import (
 	"net"
 	"testing"
+	"time"
 
 	"gitlab.lrz.de/bbrft/btp"
+	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestTransfer(t *testing.T) {
@@ -15,13 +18,16 @@ func TestTransfer(t *testing.T) {
 		return
 	}
 
-	log, _ := zap.NewDevelopment()
-	lp, _ := zap.NewProduction()
+	log, _ := log.NewDevelopment()
+	lpConf := zap.NewProductionConfig()
+	lpConf.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	lp, _ := lpConf.Build()
+
 	l, err := btp.Listen(*btp.NewDefaultOptions(lp), laddr, lp)
 	if err != nil {
 		t.Error(err)
 	}
-	s := NewServer(log, l, "./test")
+	s := NewServer(log, l, "../test/server")
 
 	go func() {
 		err := s.ListenAndServe()
@@ -32,16 +38,16 @@ func TestTransfer(t *testing.T) {
 	}()
 
 	t.Log(laddr.String())
-	c, err := Dial(log, laddr.String(), "./downloads")
+	c, err := Dial(log, laddr.String(), "../test/downloads")
 	if err != nil {
 		t.Error(err)
 	}
-	err = c.DownloadFile("test2.png", true)
+	err = c.DownloadFile("test.jpg", true)
 	if err != nil {
 		t.Error(err)
 	}
 
-	// for {
-	// 	time.Sleep(100)
-	// }
+	for {
+		time.Sleep(100)
+	}
 }

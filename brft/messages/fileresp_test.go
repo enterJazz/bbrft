@@ -44,7 +44,7 @@ func TestFileRespEncodeDecode(t *testing.T) {
 				return
 			}
 
-			fmt.Printf("message: %s\n", spew.Sdump(got))
+			fmt.Printf("message: %s\n", spew.Sdump("\n", got))
 
 			// read again
 			m := new(FileResp)
@@ -58,7 +58,7 @@ func TestFileRespEncodeDecode(t *testing.T) {
 
 			// compare the input and output
 			if !reflect.DeepEqual(*m, tt.m) {
-				t.Errorf("Encode-Decode = %v, want %v\n%s", *m, tt.m, spew.Sdump(*m, tt.m))
+				t.Errorf("Encode-Decode = %v, want %v\n%s", *m, tt.m, spew.Sdump("\n", *m, tt.m))
 
 			}
 		})

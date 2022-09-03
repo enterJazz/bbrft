@@ -41,7 +41,9 @@ func ReadUint64(s *cryptobyte.String, out *uint64) bool {
 }
 
 func NewFixedBRFTMessageBuilder(m BRFTMessage) *cryptobyte.Builder {
-	return cryptobyte.NewFixedBuilder(make([]byte, 0, BRFTHeaderSize+m.baseSize()))
+	b := cryptobyte.NewFixedBuilder(make([]byte, 0, BRFTHeaderSize+m.baseSize()))
+	writePacketHeader(m, b)
+	return b
 }
 
 func NewFixedBRFTMessageBuilderWithExtra(m BRFTMessage, extra int) *cryptobyte.Builder {
