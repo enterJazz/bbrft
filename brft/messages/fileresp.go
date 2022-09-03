@@ -7,7 +7,6 @@ import (
 	"gitlab.lrz.de/bbrft/brft/common"
 	"gitlab.lrz.de/bbrft/cyberbyte"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/cryptobyte"
 )
 
 type FileRespStatus uint8
@@ -45,9 +44,9 @@ type FileResp struct {
 	Checksum []byte
 }
 
-func (m *FileResp) baseHeaderLen() int {
-	// status + streamID + file size
-	return 1 + 2 + 8
+func (m *FileResp) baseSize() int {
+	// status + streamID + file size + checksum size
+	return 1 + 2 + 8 + common.ChecksumSize
 }
 
 func (m *FileResp) Encode(l *zap.Logger) ([]byte, error) {
@@ -61,8 +60,7 @@ func (m *FileResp) Encode(l *zap.Logger) ([]byte, error) {
 	}
 
 	// determine the length of the output
-	outLen := m.baseHeaderLen() + len(optHeaderBytes) + common.ChecksumSize
-	b := cryptobyte.NewFixedBuilder(make([]byte, 0, outLen))
+	b := NewFixedBRFTMessageBuilderWithExtra(m, len(optHeaderBytes))
 
 	// add the status
 	b.AddUint8(uint8(m.Status))

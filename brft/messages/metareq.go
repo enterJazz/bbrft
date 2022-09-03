@@ -3,6 +3,8 @@ package messages
 import (
 	"errors"
 
+	"gitlab.lrz.de/bbrft/cyberbyte"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/cryptobyte"
 )
 
@@ -20,7 +22,11 @@ func NewMetaReq(fileName string) (*MetaReq, error) {
 	}, nil
 }
 
-func (m *MetaReq) Marshal() ([]byte, error) {
+func (m *MetaReq) baseSize() int {
+	return len([]byte(m.FileName))
+}
+
+func (m *MetaReq) Encode(l *zap.Logger) ([]byte, error) {
 	fileName := []byte(m.FileName)
 	if len(fileName) > 255 {
 		return nil, errors.New("filename too long")
@@ -39,12 +45,10 @@ func (m *MetaReq) Marshal() ([]byte, error) {
 	return b.Bytes()
 }
 
-func (m *MetaReq) Unmarshal(data []byte) error {
-	s := cryptobyte.String(data)
-
+func (m *MetaReq) Decode(l *zap.Logger, s *cyberbyte.String) error {
 	// read the filename
-	var fileName cryptobyte.String
-	if !s.ReadUint8LengthPrefixed(&fileName) {
+	var fileName []byte
+	if err := s.ReadUint8LengthPrefixedBytes(&fileName); err != nil {
 		return ErrReadFailed
 	}
 	m.FileName = string(fileName)

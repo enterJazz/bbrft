@@ -27,9 +27,11 @@ func Dial(
 	downloadDir string,
 ) (*Conn, error) {
 	c := &Conn{
-		l:        l.With(log.FPeer("brft_client")), // extend logger
-		basePath: downloadDir,                      // TODO: Make sure that it actually exists / create it
-		isClient: true,
+		l:          l.With(log.FPeer("brft_client")),
+		basePath:   downloadDir, // TODO: Make sure that it actually exists / create it
+		isClient:   true,
+		streams:    make(map[messages.StreamID]stream),
+		reqStreams: make([]stream, 0, 25),
 	}
 
 	raddr, err := net.ResolveUDPAddr("udp", addr)
@@ -38,7 +40,7 @@ func Dial(
 	}
 
 	// TODO: Figure out options
-	c.conn, err = btp.Dial(btp.ConnOptions{}, nil, raddr, l)
+	c.conn, err = btp.Dial(*btp.NewDefaultOptions(l), nil, raddr, l)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create connection: %w", err)
 	}
@@ -325,7 +327,7 @@ func (c *Conn) handleClientTransferNegotiation() error {
 	}
 
 	st := messages.StartTransmission{
-		StreamID: uint16(resp.StreamID),
+		StreamID: resp.StreamID,
 		Checksum: resp.Checksum,
 	}
 

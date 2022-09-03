@@ -1,5 +1,7 @@
 package messages
 
+import "golang.org/x/crypto/cryptobyte"
+
 // ProcolType defines the protocol type of the packet
 type Version uint8
 
@@ -74,4 +76,36 @@ func NewPacketHeader(b uint8) PacketHeader {
 		Version:     Version(b & VersionMask),
 		MessageType: MessageType(b & MessageTypeMask),
 	}
+}
+
+func headerForMessage(msg BRFTMessage) PacketHeader {
+	p := PacketHeader{
+		Version: VersionBRFTv0,
+	}
+
+	switch msg.(type) {
+	case *FileReq:
+		p.MessageType = MessageTypeFileReq
+	case *FileResp:
+		p.MessageType = MessageTypeFileResp
+	case *Data:
+		p.MessageType = MessageTypeData
+	case *StartTransmission:
+		p.MessageType = MessageTypeStartTransmission
+	case *Close:
+		p.MessageType = MessageTypeClose
+	case *MetaReq:
+		p.MessageType = MessageTypeMetaDataReq
+	case *MetaResp:
+		p.MessageType = MessageTypeMetaDataResp
+	default:
+		panic("impossible message type passed to brft header creator")
+	}
+
+	return p
+}
+
+func writePacketHeader(msg BRFTMessage, s *cryptobyte.Builder) {
+	h := headerForMessage(msg)
+	s.AddUint8(uint8(h.Version) | uint8(h.MessageType))
 }
