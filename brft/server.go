@@ -1,4 +1,4 @@
-package server
+package brft
 
 import (
 	"errors"
@@ -11,28 +11,9 @@ import (
 	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/btp"
 	"gitlab.lrz.de/bbrft/cyberbyte"
+	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
-
-// create a new connection object
-type stream struct {
-	l *zap.Logger
-
-	id   messages.StreamID
-	f    *File
-	comp compression.Compressor
-}
-
-type Conn struct {
-	l *zap.Logger
-
-	*btp.Conn
-
-	// base path to the directory where the files are located
-	baseFilePath string
-
-	streams map[messages.StreamID]stream
-}
 
 type Server struct {
 	l *zap.Logger
@@ -51,17 +32,13 @@ type Server struct {
 	numConns int
 }
 
-var (
-	ErrReadLen = errors.New("unexpected read length")
-)
-
 func NewServer(
 	l *zap.Logger,
 	listener *btp.Listener,
 	baseFilePath string,
 ) *Server {
 	return &Server{
-		l:            l.With(zap.String("instance", "brft_server")),
+		l:            l.With(log.FPeer("brft_server")),
 		listener:     listener,
 		baseFilePath: baseFilePath,
 		chunkSize:    -1,
@@ -88,66 +65,47 @@ func (s *Server) ListenAndServe() error {
 		s.numConns += 1
 		id := s.numConns
 
+		// extend logging
+		l := s.l.With(
+			zap.Int("id", id),
+			zap.String("remote_addr", conn.LocalAddr().String()),
+			zap.String("local_addr", conn.RemoteAddr().String()),
+			zap.Bool("client_conn", false),
+		)
+
+		l.Info("accepted new connection")
+
+		c := &Conn{
+			l:            l,
+			conn:         conn,
+			baseFilePath: s.baseFilePath,
+			isClient:     false,
+		}
+
 		// handle the connection
-		go s.handleConnection(conn, id)
+		go c.handleServerConnection()
 	}
 }
 
 // FIXME: Figure out how to implement a gracefull shutdown when the BTP layer
 // handles timeouts
-func (s *Server) handleConnection(conn *btp.Conn, id int) {
-
-	// extend logging
-	l := s.l.With(
-		zap.Int("id", id),
-		zap.String("remote_addr", conn.LocalAddr().String()),
-		zap.String("local_addr", conn.RemoteAddr().String()),
-	)
-
-	l.Info("accepted new connection")
-
-	c := &Conn{
-		l:            l,
-		Conn:         conn,
-		baseFilePath: s.baseFilePath,
-	}
+func (c *Conn) handleServerConnection() {
 
 	// wait for incomming messages
 	for {
-		// read the message header
-		b := make([]byte, 1)
-		n, err := c.Read(b)
+		h, err := c.readHeader()
 		if err != nil {
-			c.l.Error("unable to read message header - closing", zap.Error(err))
-			err := c.Close()
-			if err != nil {
-				c.l.Error("unable to close connection", zap.Error(err))
-				return
-			}
-		} else if n != 1 {
-			c.l.Error("unable to close connection", zap.Error(ErrReadLen))
-			err := c.Close()
-			if err != nil {
-				c.l.Error("unable to close connection", zap.Error(err))
-				return
-			}
-		}
-
-		// determine the message version and type
-		h := messages.NewPacketHeader(b[0])
-		if !h.Version.Valid() {
-			c.l.Error("unsupported header protocol version")
-			err := c.Close()
-			if err != nil {
-				c.l.Error("unable to close connection", zap.Error(err))
-				return
-			}
+			// errors already handled by function
+			// TODO: maybe only return if we cannot read, not if the header is
+			// unknown - however the question is how we know how long the
+			// message is in order to advance over it
+			return
 		}
 
 		switch h.MessageType {
 		case messages.MessageTypeFileReq:
 			// handle the file transfer negotiation
-			err := c.handleTransferNegotiation()
+			err := c.handleServerTransferNegotiation()
 			// TODO: handle - probably differentiate between different errors
 			if err != nil {
 			}
@@ -172,14 +130,14 @@ func (s *Server) handleConnection(conn *btp.Conn, id int) {
 	}
 }
 
-func (c *Conn) handleTransferNegotiation() error {
+func (c *Conn) handleServerTransferNegotiation() error {
 	// read the file request
 	req := new(messages.FileReq)
 
 	// TODO: probably remove the timeout
 	//			- I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
 	// TODO: probably create one cyberbyte string for the whole connection
-	err := req.Read(c.l, cyberbyte.NewString(c.Conn, cyberbyte.DefaultTimeout))
+	err := req.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
 	if err != nil {
 		return fmt.Errorf("unanable to decode FileRequest: %w", err)
 	}
@@ -201,7 +159,7 @@ func (c *Conn) handleTransferNegotiation() error {
 		}
 
 		// find the requested file
-		stream.f, err = NewFile(req.FileName, c.baseFilePath)
+		stream.f, err = OpenFile(req.FileName, c.baseFilePath)
 		if errors.Is(err, os.ErrNotExist) {
 			// TODO: Need to send a Close message with the appropraite reason set - maybe directly from here?!
 			return nil, errors.New("file not found")
@@ -271,16 +229,14 @@ func (c *Conn) handleTransferNegotiation() error {
 	}
 
 	// send the response
-	data, err := resp.Marshal(l)
+	data, err := resp.Encode(l)
 	if err != nil {
 		return fmt.Errorf("unanable to encode FileResponse: %w", err)
 	}
 
-	n, err := c.Conn.Write(data)
+	_, err = c.conn.Write(data)
 	if err != nil {
 		return fmt.Errorf("unanable to write FileResponse: %w", err)
-	} else if n != len(data) {
-		return fmt.Errorf("short write on FileResponse: %w", err)
 	}
 
 	// add the stream to the connection
@@ -294,7 +250,7 @@ func (c *Conn) Close() error {
 
 	// TODO: Send a close message
 	// close the btp.Conn // FIXME: Probably don't want to close the btp conn all the time - we might have multiple transfers after all
-	return c.Conn.Close()
+	return c.conn.Close()
 }
 
 // newStreamID generates a new unique streamID for the connection

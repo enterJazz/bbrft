@@ -1,11 +1,11 @@
-package client
+package brft
 
 import (
 	"bytes"
-	"crypto/sha1"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -18,16 +18,26 @@ import (
 
 var fileSignature = []byte{42, 52, 46, 54, 31} // "BRFT1" i.e. BRFT file version 1
 
+var (
+	ErrNoClientFile = errors.New("file is no client file")
+)
+
+// TODO: maybe we should include the expected filesize to the client file
 type File struct {
-	l        *zap.Logger
-	f        *os.File
-	id       []byte // TODO: probably SHA-1 of the filename?
-	name     string
-	basePath string
+	l    *zap.Logger
+	f    *os.File
+	stat fs.FileInfo
+	// files on the recipient end of the connection will have the checksum
+	// prepended. This is used for resumptions
+	isClientFile bool
+	name         string
+	basePath     string
 	// checksum is the supposed checksum of the complete file
-	checksum []byte // TODO: probably SHA-256 in order to avoid collisions and attacks (?)
+	checksum []byte
 }
 
+// NewFile creates a new file using the given information. It should be used
+// only by the client
 func NewFile(
 	l *zap.Logger,
 	name string,
@@ -84,13 +94,57 @@ func NewFile(
 		}
 	}
 
-	// create the file id
-	id := sha1.Sum([]byte(name))
+	return &File{
+		l: l,
+		f: f,
+		// FIXME: stat: fs,
+		isClientFile: true,
+		name:         name,
+		basePath:     basePath,
+		checksum:     checksum,
+	}, nil
+}
+
+// FIXME: Make sure the name matches the regex
+// OpenFile opens the requested file. It should be used by the server
+func OpenFile(
+	name string,
+	basePath string,
+) (*File, error) {
+	if _, err := os.Stat(filepath.Join(basePath, name)); errors.Is(err, os.ErrNotExist) {
+		// TODO: make the server check for the error!
+		return nil, err
+	} else if err != nil {
+		return nil, err
+	}
+
+	// get a file desciptor
+	f, err := os.OpenFile(filepath.Join(basePath, name), os.O_RDONLY, 0755)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: would be probably nicer to store the checksum somewhere
+	// compute the checksum
+	checksum, err := common.ComputeChecksum(f)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compute checksum: %w", err)
+	}
+
+	// reset the file descriptor (only possible since we do not open the file with O_APPEND)
+	_, err = f.Seek(0, io.SeekStart)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reset file descriptor: %w", err)
+	}
+
+	fs, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("cannot get file stats: %w", err)
+	}
 
 	return &File{
-		l:        l,
 		f:        f,
-		id:       id[:],
+		stat:     fs,
 		name:     name,
 		basePath: basePath,
 		checksum: checksum,
@@ -109,11 +163,30 @@ func (f *File) Write(b []byte) (n int, err error) {
 	return f.f.Write(b)
 }
 
-func (f *File) GetChecksum() []byte {
+// Size will return the (current) size of the underlying file. In case the file
+// is a client file, the actual size will be reduced by the size of the
+// additional information (e.g. checksum). Therefore only the size of the actual
+// file content will be returned
+func (f *File) Size() uint64 {
+	s := uint64(f.stat.Size())
+	if f.isClientFile {
+		s -= uint64(len(fileSignature) + common.ChecksumSize) // TODO: Make const/var
+	}
+	return s
+}
+
+func (f *File) Checksum() []byte {
 	return f.checksum
 }
 
+// TODO: see if actually needed
+// TODO: comment
+// This is only possible on client files.
 func (f *File) CheckChecksum([]byte) (bool, error) {
+	if !f.isClientFile {
+		return false, ErrNoClientFile
+	}
+
 	prevOffset, err := f.f.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return false, err
@@ -133,15 +206,13 @@ func (f *File) CheckChecksum([]byte) (bool, error) {
 	}
 }
 
-// Finish will remove any temporary information from the file. After completion
-// the file descriptor will be closed.
-func (f *File) Finish() error {
-	// remove the magic file signature and the checksum
-	return f.stripChecksum()
-}
+// StripChecksum removes the magic file signature and the checksum. This is only
+// possible on client files. After completion the file descriptor will be closed.
+func (f *File) StripChecksum() error {
+	if !f.isClientFile {
+		return ErrNoClientFile
+	}
 
-// stripChecksum removes the magic file signature and the checksum. After completion the file descriptor will be closed
-func (f *File) stripChecksum() error {
 	// go to the start of the file
 	_, err := f.f.Seek(0, io.SeekStart)
 	if err != nil {
@@ -194,7 +265,6 @@ func readChecksum(f *os.File) ([]byte, error) {
 }
 
 func writeChecksum(f *os.File, checksum []byte) error {
-	// TODO: maybe make variable length
 	if len(checksum) != shared.ChecksumSize {
 		return ErrInvalidChecksum
 	}
@@ -202,7 +272,7 @@ func writeChecksum(f *os.File, checksum []byte) error {
 	n, err := f.Write(fileSignature)
 	if err != nil {
 		return err
-	} else if n != len(checksum) {
+	} else if n != len(fileSignature) {
 		return ErrInsufficientWrite
 	}
 

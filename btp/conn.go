@@ -224,10 +224,6 @@ func (c *Conn) LocalAddr() net.Addr {
 //
 // A zero value for t means I/O operations will not time out.
 func (c *Conn) SetDeadline(t time.Time) error {
-	if !c.connOpen {
-		return ErrConnectionNotRead
-	}
-
 	return c.conn.SetDeadline(t)
 }
 
@@ -237,10 +233,6 @@ func (c *Conn) SetDeadline(t time.Time) error {
 // and any currently-blocked Read call.
 // A zero value for t means Read will not time out.
 func (c *Conn) SetReadDeadline(t time.Time) error {
-	if !c.connOpen {
-		return ErrConnectionNotRead
-	}
-
 	return c.conn.SetReadDeadline(t)
 }
 
@@ -252,10 +244,6 @@ func (c *Conn) SetReadDeadline(t time.Time) error {
 // some of the data was successfully written.
 // A zero value for t means Write will not time out.
 func (c *Conn) SetWriteDeadline(t time.Time) error {
-	if !c.connOpen {
-		return ErrConnectionNotRead
-	}
-
 	return c.conn.SetWriteDeadline(t)
 }
 
