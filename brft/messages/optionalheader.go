@@ -286,7 +286,10 @@ func readOptionalHeaders(l *zap.Logger, s *cyberbyte.String) (OptionalHeaders, e
 	for n := 0; n < int(numHeaders); n++ {
 
 		base := new(BaseOptionalHeader)
-		base.Decode(s)
+		err := base.Decode(s)
+		if err != nil {
+			return nil, err
+		}
 
 		// check whether the type is known
 		var h OptionalHeader
