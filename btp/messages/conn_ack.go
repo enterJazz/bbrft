@@ -82,3 +82,7 @@ func (p *ConnAck) Unmarshal(h PacketHeader, r io.Reader) error {
 
 	return nil
 }
+
+func (p *ConnAck) SetSeqNr(seqNr uint16) {
+	p.PacketHeader.SeqNr = seqNr
+}

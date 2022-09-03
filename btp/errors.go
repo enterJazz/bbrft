@@ -4,10 +4,10 @@ import "errors"
 
 var (
 	ErrInvalidClientResp      = errors.New("invalid client response")
-	ErrInvalidServerResp      = errors.New("invalid client response")
+	ErrInvalidServerResp      = errors.New("invalid server response")
 	ErrInvalidSeqNr           = errors.New("invalid sequence number")
 	ErrInvalidProtocolVersion = errors.New("invalid protocol version")
-	ErrConnectionNotRead      = errors.New("connection not ready")
+	ErrConnectionNotReady     = errors.New("connection not ready")
 )
 
 func ErrInvalidHandshakeOption(option string) error {

@@ -27,6 +27,22 @@ const (
 	MessageTypeClose   MessageType = iota + 1
 )
 
+func (m MessageType) String() string {
+	switch m {
+	case MessageTypeAck:
+		return "Ack"
+	case MessageTypeConn:
+		return "Conn"
+	case MessageTypeConnAck:
+		return "ConnAck"
+	case MessageTypeData:
+		return "Data"
+	case MessageTypeClose:
+		return "Close"
+	}
+	return "unknown"
+}
+
 const (
 	HeaderSize = 4
 
@@ -47,6 +63,7 @@ type Codable interface {
 	Unmarshal(h PacketHeader, r io.Reader) error
 	Size() uint
 	GetHeader() PacketHeader
+	SetSeqNr(seqNr uint16)
 }
 
 // 0                   1                   2                   3
@@ -120,6 +137,7 @@ func ReadHeader(r io.Reader) (h PacketHeader, err error) {
 
 func ParseHeader(buf []byte) (h PacketHeader, err error) {
 	var t uint8
+	var t uint8
 
 	s := cryptobyte.String(buf)
 	ok := s.ReadUint8(&t)
@@ -139,8 +157,10 @@ func ParseHeader(buf []byte) (h PacketHeader, err error) {
 
 	if h.ProtocolType != ProtocolVersionBTPv1 {
 		err = NewDecodeError("protocol version missmatch")
+		if h.ProtocolType != ProtocolVersionBTPv1 {
+		err = NewDecodeError("protocol version missmatch")
 		return
-	}
+		}
 
 	return
 }

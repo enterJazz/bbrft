@@ -24,6 +24,10 @@ func (p *Data) GetHeader() PacketHeader {
 	return p.PacketHeader
 }
 
+func (p *Data) SetSeqNr(seqNr uint16) {
+	p.PacketHeader.SeqNr = seqNr
+}
+
 // Marshal encodes a given Data message into transport format
 func (p *Data) Marshal() ([]byte, error) {
 	b := createPacketBuilder(p)
