@@ -1,24 +1,50 @@
 package messages
 
 import (
+	"fmt"
+
+	"gitlab.lrz.de/bbrft/brft/common"
 	"gitlab.lrz.de/bbrft/cyberbyte"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/cryptobyte"
 )
 
 type StartTransmission struct {
-	StreamID uint16
+	StreamID StreamID
 	// Checksum of the file to be downloaded, since it might have changed since the FileResp.
 	Checksum []byte
 	// (optional) Offset of a previous download
 	Offset uint64
 }
 
+func (m *StartTransmission) baseHeaderLen() int {
+	// flags + file name length
+	return 2 + common.ChecksumSize + 8
+}
+
 func (m *StartTransmission) Encode(l *zap.Logger) ([]byte, error) {
-	// TODO: Implement
-	return nil, nil
+	b := cryptobyte.NewFixedBuilder(make([]byte, 0, m.baseHeaderLen()))
+
+	b.AddUint16(uint16(m.StreamID))
+	b.AddBytes(m.Checksum)
+	AddUint64(b, m.Offset)
+	return b.Bytes()
 }
 
 func (m *StartTransmission) Decode(l *zap.Logger, s *cyberbyte.String) error {
-	// TODO: Implement
+	var streamID uint16
+	if err := s.ReadUint16(&streamID); err != nil {
+		return fmt.Errorf("unable to read flags: %w", err)
+	}
+	m.StreamID = StreamID(streamID)
+
+	if err := s.ReadBytes(&m.Checksum, common.ChecksumSize); err != nil {
+		return fmt.Errorf("unable to read checksum: %w", err)
+	}
+
+	if err := s.ReadUint64(&m.Offset); err != nil {
+		return fmt.Errorf("unable to read offset: %w", err)
+	}
+
 	return nil
 }
