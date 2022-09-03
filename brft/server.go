@@ -202,7 +202,7 @@ func (c *Conn) handleServerTransferNegotiation() error {
 	// handle resumption
 	if req.Flags.IsSet(messages.FileReqFlagResumption) {
 		// we need a checksum for resumption
-		if bytes.Compare(req.Checksum, make([]byte, common.ChecksumSize)) == 0 {
+		if bytes.Equal(req.Checksum, make([]byte, common.ChecksumSize)) {
 			// close the stream, but keep the connection open
 			// NOTE: The stream object has not yet been added to c.streams
 			// (i.e. no cleanup needed)
@@ -216,8 +216,8 @@ func (c *Conn) handleServerTransferNegotiation() error {
 	}
 	// if the checksum is not zero we expect it to be identical to the one
 	// of the requested file.
-	if bytes.Compare(req.Checksum, make([]byte, common.ChecksumSize)) != 0 &&
-		bytes.Compare(req.Checksum, stream.f.Checksum()) != 0 {
+	if !bytes.Equal(req.Checksum, make([]byte, common.ChecksumSize)) &&
+		!bytes.Equal(req.Checksum, stream.f.Checksum()) {
 		// close the stream, but keep the connection open
 		// NOTE: The stream object has not yet been added to c.streams
 		// (i.e. no cleanup needed)

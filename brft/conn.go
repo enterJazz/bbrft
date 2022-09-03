@@ -54,7 +54,7 @@ type Conn struct {
 func (c *Conn) CloseStream(
 	sid *messages.StreamID,
 	r messages.CloseReason,
-) error {
+) { // no need to return an error since we want to close it either way
 	// TODO: Send the close message
 
 	if sid != nil {
@@ -75,8 +75,6 @@ func (c *Conn) CloseStream(
 	}
 
 	// TODO: Should the whole connection be closed if this is the only stream?!
-
-	return nil
 }
 
 // Close sends close messages to all the (remaining) streams and closes the

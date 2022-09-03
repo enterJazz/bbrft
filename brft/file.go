@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
@@ -195,11 +194,14 @@ func (f *File) CheckChecksum([]byte) (bool, error) {
 	defer f.f.Seek(prevOffset, io.SeekStart)
 
 	offset := int64(len(fileSignature) + common.ChecksumSize - 1)
-	f.f.Seek(offset, io.SeekStart)
+	_, err = f.f.Seek(offset, io.SeekStart)
+	if err != nil {
+		return false, err
+	}
 
 	if checksum, err := common.ComputeChecksum(f.f); err != nil {
 		return false, err
-	} else if bytes.Compare(checksum, f.checksum) != 0 {
+	} else if !bytes.Equal(checksum, f.checksum) {
 		return false, nil
 	} else {
 		return true, nil
@@ -226,7 +228,7 @@ func (f *File) StripChecksum() error {
 	}
 
 	// write the remainder of the file to a temporary file
-	tmpFile, err := ioutil.TempFile(os.TempDir(), "*.brft")
+	tmpFile, err := os.CreateTemp("", "*.brft")
 	if err != nil {
 		return err
 	}
@@ -249,7 +251,7 @@ func readChecksum(f *os.File) ([]byte, error) {
 		return nil, err
 	} else if n != len(fileSignature) {
 		return nil, ErrInsufficientRead
-	} else if bytes.Compare(sig, fileSignature) != 0 {
+	} else if !bytes.Equal(sig, fileSignature) {
 		return nil, ErrNotABRFTFile
 	}
 

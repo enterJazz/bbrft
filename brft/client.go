@@ -18,7 +18,6 @@ import (
 // TODO: move
 const (
 	serverAddrStr = "127.0.0.1:1337"
-	compressionMultiplier
 )
 
 func Dial(
@@ -95,7 +94,7 @@ func (c *Conn) DownloadFile(
 	if withCompression {
 		h := messages.NewCompressionReqOptionalHeader(
 			messages.CompressionReqHeaderAlgorithmGzip,
-			0, // -> 64kB
+			0, // -> 64kB // TODO: Make configurable
 		)
 		req.OptHeaders = append(req.OptHeaders, h)
 		s.chunkSize = h.ChunkSize()
@@ -243,8 +242,8 @@ func (c *Conn) handleClientTransferNegotiation() error {
 	)
 
 	// set & check the checksum
-	if bytes.Compare(s.requestedChecksum, make([]byte, common.ChecksumSize)) != 0 &&
-		bytes.Compare(s.requestedChecksum, s.f.Checksum()) != 0 {
+	if !bytes.Equal(s.requestedChecksum, make([]byte, common.ChecksumSize)) &&
+		!bytes.Equal(s.requestedChecksum, s.f.Checksum()) {
 		// TODO: potentially add a dialogue to allow the resumption of the download
 		s.l.Error("checksums do not match",
 			zap.String("requestedChecksum", spew.Sdump(s.requestedChecksum)),
