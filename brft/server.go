@@ -76,7 +76,7 @@ func (s *Server) ListenAndServe() error {
 			conn:     conn,
 			basePath: s.basePath,
 			isClient: false,
-			streams:  make(map[messages.StreamID]stream, 100),
+			streams:  make(map[messages.StreamID]*stream, 100),
 		}
 
 		// handle the connection
@@ -89,6 +89,17 @@ func (s *Server) ListenAndServe() error {
 // NOTE: This function can only run in a single thread, since we always need to
 // read the whole message from the btp.Conn
 func (c *Conn) handleServerConnection() {
+	closeConn := func(messageType string, err error) {
+		c.l.Error("unable to handle packet - closing connection",
+			zap.String("message_type", messageType),
+			zap.Error(err),
+		)
+
+		errClose := c.Close()
+		if errClose != nil {
+			c.l.Error("error while closing connection", zap.Error(errClose))
+		}
+	}
 
 	// wait for incomming messages
 	for {
@@ -102,33 +113,40 @@ func (c *Conn) handleServerConnection() {
 			return
 		}
 
+		// handle the message here to make sure that the whole read happens in
+		// on go (multiple concurrent reads could lead to nasty mixups)
 		switch h.MessageType {
 		case messages.MessageTypeFileReq:
-			// handle the file transfer negotiation
-			err := c.handleServerTransferNegotiation()
+			// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
+			// decode the packet
+			req := new(messages.FileReq)
+			err := req.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
 			if err != nil {
-				c.l.Error("unable to handle FileRequest - closing connection",
-					zap.Error(err),
-				)
-
-				errClose := c.Close()
-				if errClose != nil {
-					c.l.Error("error while closing connection", zap.Error(errClose))
-				}
+				closeConn("FileRequest", fmt.Errorf("unanable to decode FileRequest: %w", err))
 				return
 			}
-		case messages.MessageTypeStartTransmission:
-			// TODO: handle the packet and start transmitting data packets (concurrently?)
-			err := c.handleServerTransmissionStart()
-			if err != nil {
-				c.l.Error("unable to handle FileRequest - closing connection",
-					zap.Error(err),
-				)
 
-				errClose := c.Close()
-				if errClose != nil {
-					c.l.Error("error while closing connection", zap.Error(errClose))
-				}
+			// handle the file transfer negotiation
+			err = c.handleServerTransferNegotiation(req)
+			if err != nil {
+				closeConn("FileRequest", err)
+				return
+			}
+
+		case messages.MessageTypeStartTransmission:
+			// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
+			// decode the packet
+			st := new(messages.StartTransmission)
+			err := st.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
+			if err != nil {
+				closeConn("StartTransmission", fmt.Errorf("unanable to decode StartTransmission: %w", err))
+				return
+			}
+
+			// handle the file transfer negotiation
+			err = c.handleServerTransmissionStart(st)
+			if err != nil {
+				closeConn("StartTransmission", err)
 				return
 			}
 
@@ -153,7 +171,7 @@ func (c *Conn) handleServerConnection() {
 			c.l.Error("unknown message type",
 				zap.Uint8("type_encoding", uint8(h.MessageType)),
 			)
-			// TODO: probably close
+			// TODO: need to close since we don't know how many bytes to skip
 		}
 	}
 }
@@ -167,22 +185,12 @@ func (c *Conn) handleServerConnection() {
 // The function might close the stream and remove any information about it
 // remaining on the Conn if a non-critical error occurs. As such, only critical
 // errors that should lead to closing the whole btp.Conn are returned.
-func (c *Conn) handleServerTransferNegotiation() error {
-	// read the file request
-	req := new(messages.FileReq)
-
-	// TODO: probably remove the timeout
-	//			- I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
-	// TODO: probably create one cyberbyte string for the whole connection
-	err := req.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
-	if err != nil {
-		return fmt.Errorf("unanable to decode FileRequest: %w", err)
-	}
+func (c *Conn) handleServerTransferNegotiation(req *messages.FileReq) error {
 
 	// create a new stream
 	id := c.newStreamID()
 	l := c.l.With(zap.Uint16("stream_id", uint16(id)))
-	stream := stream{
+	s := stream{
 		l:                 l,
 		id:                id,
 		fileName:          req.FileName,
@@ -192,12 +200,13 @@ func (c *Conn) handleServerTransferNegotiation() error {
 	// create a FileResponse
 	resp := &messages.FileResp{
 		Status:   messages.FileRespStatusOk,
-		StreamID: stream.id,
+		StreamID: s.id,
 		Checksum: make([]byte, 32), // empty checksum
 	}
 
 	// find the requested file
-	stream.f, err = OpenFile(req.FileName, c.basePath)
+	var err error
+	s.f, err = OpenFile(req.FileName, c.basePath)
 	if errors.Is(err, os.ErrNotExist) {
 		l.Error("file does not exists - closing stream")
 		// close the stream, but keep the connection open
@@ -213,8 +222,8 @@ func (c *Conn) handleServerTransferNegotiation() error {
 		c.CloseStream(nil, messages.CloseReasonUndefined)
 		return nil
 	}
-	resp.FileSize = stream.f.Size()
-	resp.Checksum = stream.f.Checksum()
+	resp.FileSize = s.f.Size()
+	resp.Checksum = s.f.Checksum()
 
 	// handle resumption
 	if req.Flags.IsSet(messages.FileReqFlagResumption) {
@@ -227,14 +236,18 @@ func (c *Conn) handleServerTransferNegotiation() error {
 			return nil
 		}
 
-		stream.isResumption = true
+		s.isResumption = true
 		// NOTE offset can only be set after the StartTransmission packet
 		// has been received
 	}
 	// if the checksum is not zero we expect it to be identical to the one
 	// of the requested file.
 	if !bytes.Equal(req.Checksum, make([]byte, common.ChecksumSize)) &&
-		!bytes.Equal(req.Checksum, stream.f.Checksum()) {
+		!bytes.Equal(req.Checksum, s.f.Checksum()) {
+		s.l.Error("invalid checksum",
+			zap.String("actual_checksum", spew.Sdump("\n", s.f.Checksum())),
+			zap.String("received_checksum", spew.Sdump("\n", req.Checksum)),
+		)
 		// close the stream, but keep the connection open
 		// NOTE: The stream object has not yet been added to c.streams
 		// (i.e. no cleanup needed)
@@ -258,10 +271,10 @@ func (c *Conn) handleServerTransferNegotiation() error {
 			}
 
 			// TODO: it would be nicer to have one compressor per Server
-			stream.comp = compression.NewGzipCompressor(stream.l)
-			stream.chunkSize = v.ChunkSize()
+			s.comp = compression.NewGzipCompressor(s.l)
+			s.chunkSize = v.ChunkSize()
 
-			if resp.FileSize < stream.comp.MinFileSize() {
+			if resp.FileSize < s.comp.MinFileSize() {
 				respOpt = messages.NewCompressionRespOptionalHeader(
 					messages.CompressionRespHeaderStatusFileTooSmall,
 				)
@@ -329,7 +342,7 @@ func (c *Conn) handleServerTransferNegotiation() error {
 		return nil
 	}
 
-	stream.l.Debug("sending FileResponse",
+	s.l.Debug("sending FileResponse",
 		zap.String("file_request", spew.Sdump("\n", req)),
 		zap.String("packet", spew.Sdump("\n", resp)),
 		zap.String("packet_encoded", spew.Sdump("\n", data)),
@@ -343,33 +356,44 @@ func (c *Conn) handleServerTransferNegotiation() error {
 
 	// add the stream to the connection
 	c.streamsMu.Lock()
-	c.streams[stream.id] = stream
+	c.streams[s.id] = &s
 	c.streamsMu.Unlock()
 
 	return nil
 }
 
-func (c *Conn) handleServerTransmissionStart() error {
-	// read the start transmission
-	st := new(messages.StartTransmission)
+func (c *Conn) handleServerTransmissionStart(st *messages.StartTransmission) error {
 
-	// TODO: probably remove the timeout
-	//			- I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
-	// TODO: probably create one cyberbyte string for the whole connection
-	err := st.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
-	if err != nil {
-		return fmt.Errorf("unanable to decode FileRequest: %w", err)
-	}
-
-	// TODO: it's not really nice to always block the whole stream
+	// FIXME: it's not really nice to always block the whole stream
+	//			- how much locking is actually needed?!
 	c.streamsMu.RLock()
-	defer c.streamsMu.RUnlock()
 	s, ok := c.streams[st.StreamID]
 	if !ok {
 		c.CloseStream(&st.StreamID, messages.CloseReasonUndefined)
 		return nil
 	}
+	c.streamsMu.RUnlock()
 	// remove the stream from the requested ones
+
+	// once again check the checksum
+	if !bytes.Equal(st.Checksum, s.f.Checksum()) {
+		s.l.Error("invalid checksum",
+			zap.String("actual_checksum", spew.Sdump("\n", s.f.Checksum())),
+			zap.String("received_checksum", spew.Sdump("\n", st.Checksum)),
+		)
+		c.CloseStream(&st.StreamID, messages.CloseReasonChecksumInvalid)
+		return nil
+	}
+
+	// make sure the offset (if set) is not too big for the file
+	if st.Offset >= s.f.Size() {
+		s.l.Error("invalid offset",
+			zap.Uint64("offset", st.Offset),
+			zap.Uint64("file_size", s.f.Size()),
+		)
+		c.CloseStream(&st.StreamID, messages.CloseReasonInvalidOffset)
+		return nil
+	}
 
 	// TODO: actually start transmission
 	s.l.Debug("start sending data packets",
@@ -378,7 +402,40 @@ func (c *Conn) handleServerTransmissionStart() error {
 		// TODO: zap.String("packet_encoded", spew.Sdump("\n",data)),
 	)
 
+	// update the stream
+	s.handshakeDone = true // TODO: Probably have to protect against concurrency somehow
+
+	c.streamsMu.Lock()
+	c.streams[s.id] = s
+	c.streamsMu.Unlock()
+
+	// start sending from the stream
+	go c.sendData(s)
+
 	return nil
+}
+
+// TODO: somehow we should block other routines from sending as well or even modify the stream
+// 		Maybe:
+//			- sendData returns channels: cancel (to close from the Conn)
+//			- remove the stream from c.streams
+
+func (c *Conn) sendData(s *stream) {
+
+	// TODO: Implement
+	// if s.isSending {
+	// 	return ErrStreamIsSending
+	// }
+
+	// for {
+	// 	// TODO: read a chunk size from the file
+
+	// 	// TODO: optionally compress the data
+
+	// 	// TODO: assemble the packet
+
+	// 	// TODO: send the packet
+	// }
 }
 
 // newStreamID generates a new unique streamID for the connection

@@ -29,8 +29,8 @@ func Dial(
 		l:          l.With(log.FPeer("brft_client")),
 		basePath:   downloadDir, // TODO: Make sure that it actually exists / create it
 		isClient:   true,
-		streams:    make(map[messages.StreamID]stream, 100),
-		reqStreams: make([]stream, 0, 25),
+		streams:    make(map[messages.StreamID]*stream, 100),
+		reqStreams: make([]*stream, 0, 25),
 	}
 
 	raddr, err := net.ResolveUDPAddr("udp", addr)
@@ -80,7 +80,7 @@ func (c *Conn) DownloadFile(
 		Checksum: make([]byte, common.ChecksumSize),
 	}
 
-	s := stream{
+	s := &stream{
 		l:                 c.l.With(zap.String("file_name", fileName)),
 		fileName:          fileName,
 		requestedChecksum: req.Checksum,
@@ -141,6 +141,18 @@ func (c *Conn) DownloadFile(
 // NOTE: This function can only run in a single thread, since we always need to
 // read the whole message from the btp.Conn
 func (c *Conn) handleClientConnection() {
+	closeConn := func(messageType string, err error) {
+		c.l.Error("unable to handle packet - closing connection",
+			zap.String("message_type", messageType),
+			zap.Error(err),
+		)
+
+		errClose := c.Close()
+		if errClose != nil {
+			c.l.Error("error while closing connection", zap.Error(errClose))
+		}
+	}
+
 	for {
 		h, err := c.readHeader()
 		if err != nil {
@@ -152,21 +164,27 @@ func (c *Conn) handleClientConnection() {
 			return
 		}
 
+		// handle the message here to make sure that the whole read happens in
+		// on go (multiple concurrent reads could lead to nasty mixups)
 		switch h.MessageType {
 		case messages.MessageTypeFileResp:
-			// handle the file transfer negotiation
-			err := c.handleClientTransferNegotiation()
-			if err != nil {
-				c.l.Error("unable to handle FileResponse - closing connection",
-					zap.Error(err),
-				)
 
-				errClose := c.Close()
-				if errClose != nil {
-					c.l.Error("error while closing connection", zap.Error(errClose))
-				}
+			// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
+			// decode the packet
+			resp := new(messages.FileResp)
+			err := resp.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
+			if err != nil {
+				closeConn("FileResponse", fmt.Errorf("unanable to decode FileResponse: %w", err))
 				return
 			}
+
+			// handle the file transfer negotiation
+			err = c.handleClientTransferNegotiation(resp)
+			if err != nil {
+				closeConn("FileResponse", err)
+				return
+			}
+
 		case messages.MessageTypeData:
 			// TODO: handle the packet and save it to the correct file
 
@@ -203,19 +221,7 @@ func (c *Conn) handleClientConnection() {
 // The function might close the stream and remove any information about it
 // remaining on the Conn if a non-critical error occurs. As such, only critical
 // errors that should lead to closing the whole btp.Conn are returned.
-func (c *Conn) handleClientTransferNegotiation() error {
-
-	// read the file request
-	resp := new(messages.FileResp)
-
-	// TODO: probably remove the timeout
-	//			- I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
-	// TODO: probably create one cyberbyte string for the whole connection
-	err := resp.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
-	if err != nil {
-		// actually close the whole connection TODO: is that correct?
-		return fmt.Errorf("unanable to decode FileRequest: %w", err)
-	}
+func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 
 	// get the next stream without a response yet
 	c.reqStreamsMu.Lock()

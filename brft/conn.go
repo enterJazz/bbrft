@@ -30,6 +30,8 @@ type stream struct {
 	// resumption
 	isResumption bool
 	offset       uint64
+
+	handshakeDone bool
 }
 
 type Conn struct {
@@ -43,8 +45,8 @@ type Conn struct {
 	// directory where the client downloads to
 	basePath string
 
-	streams      map[messages.StreamID]stream
-	reqStreams   []stream // TODO: Implement a ring buffer for the requested streams
+	streams      map[messages.StreamID]*stream
+	reqStreams   []*stream // TODO: Implement a ring buffer for the requested streams
 	streamsMu    sync.RWMutex
 	reqStreamsMu sync.RWMutex
 }

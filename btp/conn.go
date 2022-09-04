@@ -139,6 +139,7 @@ func (c *Conn) start() error {
 	return nil
 }
 
+// NOTE: This function is not safe for concurrent access
 func (c *Conn) Write(b []byte) (n int, err error) {
 	payload := b
 	maxSize := int(c.Options.MaxPacketSize)
@@ -169,6 +170,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 
 // Read() returns io.Err if channel closed and read buf cannot be filled completely
 // returns num bytes read
+// NOTE: This function is not safe for concurrent access
 func (c *Conn) Read(b []byte) (n int, err error) {
 	// assumption: dataChan ordered beforehand by flow ctrl
 	for c.readBuf.Len() < len(b) {
