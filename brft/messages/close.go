@@ -21,6 +21,7 @@ const (
 	CloseReasonFileNotFound
 	CloseReasonUnsupportedOptionalHeader
 	CloseReasonUnexpectedOptionalHeader
+	CloseReasonStreamIDTaken
 	// ...
 )
 

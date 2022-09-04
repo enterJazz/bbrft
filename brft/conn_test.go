@@ -4,17 +4,15 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+	"gitlab.lrz.de/bbrft/log"
 )
 
 func TestTransfer(t *testing.T) {
 
-	lpConf := zap.NewProductionConfig()
-	lpConf.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-	lp, _ := lpConf.Build()
-
-	s, laddr, err := NewServer(lp, "127.0.0.1:1337", "../test/server", nil)
+	ld, _ := log.NewLogger()
+	lp, err := log.NewLogger(log.WithProd(true))
+	opt := &ServerOptions{NewDefaultOptions(lp)}
+	s, laddr, err := NewServer(ld, "127.0.0.1:1337", "../test/server", opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +26,7 @@ func TestTransfer(t *testing.T) {
 	}()
 
 	t.Log(laddr.String())
-	c, err := Dial(lp, laddr.String(), "../test/downloads", nil)
+	c, err := Dial(ld, laddr.String(), "../test/downloads", nil)
 	if err != nil {
 		t.Error(err)
 	}

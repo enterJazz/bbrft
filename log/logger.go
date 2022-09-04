@@ -8,17 +8,54 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-func NewDevelopment() (*zap.Logger, error) {
-	zap.RegisterEncoder("pretty-console", NewEscapeSeqJSONEncoder)
-	conf := zap.NewDevelopmentConfig()
-	conf.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-	conf.Encoding = "pretty-console"
-	return conf.Build()
+type Options struct {
+	color         bool
+	prettyNewLine bool
+	prod          bool
 }
 
-func NewProduction() (*zap.Logger, error) {
-	conf := zap.NewProductionConfig()
-	conf.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+func NewOptions() *Options {
+	return &Options{
+		color:         true,
+		prettyNewLine: true,
+		prod:          false,
+	}
+}
+
+type Option func(o *Options)
+
+func WithColor(v bool) Option {
+	return func(o *Options) {
+		o.color = v
+	}
+}
+
+func WithProd(v bool) Option {
+	return func(o *Options) {
+		o.prod = v
+	}
+}
+
+func NewLogger(opts ...Option) (*zap.Logger, error) {
+	o := NewOptions()
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	conf := zap.NewDevelopmentConfig()
+	if o.prod {
+		conf = zap.NewProductionConfig()
+	}
+
+	if o.color {
+		conf.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	}
+
+	if o.prettyNewLine {
+		zap.RegisterEncoder("pretty-console", NewEscapeSeqJSONEncoder)
+		conf.Encoding = "pretty-console"
+	}
+
 	return conf.Build()
 }
 

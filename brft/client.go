@@ -27,11 +27,10 @@ func Dial(
 	options *ConnOptions,
 ) (*Conn, error) {
 	c := &Conn{
-		l:          l.With(log.FPeer("brft_client")),
-		basePath:   downloadDir, // TODO: Make sure that it actually exists / create it
-		isClient:   true,
-		streams:    make(map[messages.StreamID]*stream, 100),
-		reqStreams: make([]*stream, 0, 25),
+		l:        l.With(log.FPeer("brft_client")),
+		basePath: downloadDir, // TODO: Make sure that it actually exists / create it
+		isClient: true,
+		streams:  make(map[messages.StreamID]*stream, 100),
 	}
 
 	if options == nil {
@@ -76,7 +75,9 @@ func (c *Conn) DownloadFile(
 	// }
 
 	// create a new request
+	sid := c.newStreamID()
 	req := &messages.FileReq{
+		StreamID: sid,
 		// OptionalHeaders for the upcomming file transfer
 		OptHeaders: make(messages.OptionalHeaders, 0, 1),
 		// FileName of the requested file, can be at most 255 characters long
@@ -87,7 +88,11 @@ func (c *Conn) DownloadFile(
 	}
 
 	s := &stream{
-		l:                 c.l.With(zap.String("file_name", fileName)),
+		l: c.l.With(
+			zap.String("file_name", fileName),
+			zap.Uint16("stream_id", uint16(sid)),
+		),
+		id:                sid,
 		fileName:          fileName,
 		requestedChecksum: req.Checksum,
 		//isResumption: , TODO: set
@@ -115,18 +120,19 @@ func (c *Conn) DownloadFile(
 		zap.String("packet_encoded", spew.Sdump("\n", data)),
 	)
 
-	// We need to ensure that all FileRequests are sent to the server in the
-	// same order as they are added to the reqStreams slice in order to be able
-	// to create an association between FileReq and FileResp
-	c.reqStreamsMu.Lock()
+	// write the encoded message
 	_, err = c.conn.Write(data)
 	if err != nil {
 		return fmt.Errorf("unable to encode FileRequest: %w", err)
 	}
 
-	// add the stream to the preliminary streams waiting for a server response
-	c.reqStreams = append(c.reqStreams, s)
-	c.reqStreamsMu.Unlock()
+	// add the stream to map of streams
+	c.streamsMu.Lock()
+	c.streams[s.id] = s
+	c.streamsMu.Unlock()
+
+	// start handling of the stream
+	// TODO: c.handleStream(s)
 
 	// clean up the stream corresponding to the requested file after a set
 	// amount of time
@@ -230,27 +236,21 @@ func (c *Conn) handleClientConnection() {
 func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 
 	// get the next stream without a response yet
-	c.reqStreamsMu.Lock()
-	if len(c.reqStreams) < 1 {
+	c.streamsMu.Lock()
+	s, ok := c.streams[resp.StreamID]
+	c.streamsMu.Unlock()
+	if !ok {
 		c.l.Error("no file request found for FileResponse message",
-			zap.String("requested_streams", spew.Sdump("\n", c.reqStreams)),
+			zap.String("streams", spew.Sdump("\n", c.streams)),
 		)
 
 		// close the stream, but keep the connection open
-		// NOTE: The stream object has been removed from c.reqStreams and
-		// not yet added to c.streams (i.e. no cleanup needed)
-		c.CloseStream(nil, messages.CloseReasonUndefined)
+		c.CloseStream(&s.id, messages.CloseReasonUndefined)
 		return nil
 	}
-	s := c.reqStreams[0]
-	// remove the stream from the requested ones
-	c.reqStreams = c.reqStreams[1:]
-	c.reqStreamsMu.Unlock()
 
 	// update the stream
-	s.id = resp.StreamID
 	s.l = s.l.With(
-		zap.Uint16("stream_id", uint16(s.id)),
 		zap.String("remote_addr", c.conn.LocalAddr().String()),
 		zap.String("local_addr", c.conn.RemoteAddr().String()),
 		zap.Bool("client_conn", true),
@@ -266,9 +266,7 @@ func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 		)
 
 		// close the stream, but keep the connection open
-		// NOTE: The stream object has been removed from c.reqStreams and
-		// not yet added to c.streams (i.e. no cleanup needed)
-		c.CloseStream(nil, messages.CloseReasonChecksumInvalid)
+		c.CloseStream(&s.id, messages.CloseReasonChecksumInvalid)
 		return nil
 	}
 
@@ -296,9 +294,7 @@ func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 			)
 
 			// close the stream, but keep the connection open
-			// NOTE: The stream object has been removed from c.reqStreams and
-			// not yet added to c.streams (i.e. no cleanup needed)
-			c.CloseStream(nil, messages.CloseReasonUnexpectedOptionalHeader)
+			c.CloseStream(&s.id, messages.CloseReasonUnexpectedOptionalHeader)
 			return nil
 
 		case *messages.UnknownOptionalHeader:
@@ -307,9 +303,7 @@ func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 			)
 
 			// close the stream, but keep the connection open
-			// NOTE: The stream object has been removed from c.reqStreams and
-			// not yet added to c.streams (i.e. no cleanup needed)
-			c.CloseStream(nil, messages.CloseReasonUnsupportedOptionalHeader)
+			c.CloseStream(&s.id, messages.CloseReasonUnsupportedOptionalHeader)
 			return nil
 
 		default:
@@ -318,14 +312,13 @@ func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 			)
 
 			// close the stream, but keep the connection open
-			// NOTE: The stream object has been removed from c.reqStreams and
-			// not yet added to c.streams (i.e. no cleanup needed)
-			c.CloseStream(nil, messages.CloseReasonUnsupportedOptionalHeader)
+			c.CloseStream(&s.id, messages.CloseReasonUnsupportedOptionalHeader)
 			return nil
 		}
 	}
 
 	// TODO: Create the file - is there a way to allocate the memory?
+	var err error
 	s.f, err = NewFile(s.l, s.fileName, c.basePath, resp.Checksum)
 	if err != nil {
 		c.l.Error("unable to initialize file",
@@ -333,10 +326,8 @@ func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 			zap.String("s.checksum", spew.Sdump("\n", resp.Checksum)),
 			zap.Error(err),
 		)
-		// close the stream, but keep the connection open
-		// NOTE: The stream object has been removed from c.reqStreams and
-		// not yet added to c.streams (i.e. no cleanup needed)
-		c.CloseStream(nil, messages.CloseReasonUndefined) // there's only a reason for files that are too big
+		// close the stream, but keep the connection open´
+		c.CloseStream(&s.id, messages.CloseReasonUndefined) // there's only a reason for files that are too big
 		return fmt.Errorf("unable to initialize file: %w", err)
 	}
 
@@ -361,9 +352,7 @@ func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 			zap.Error(err),
 		)
 		// close the stream, but keep the connection open
-		// NOTE: The stream object has been removed from c.reqStreams and
-		// not yet added to c.streams (i.e. no cleanup needed)
-		c.CloseStream(nil, messages.CloseReasonUndefined)
+		c.CloseStream(&s.id, messages.CloseReasonUndefined)
 		return nil
 	}
 
