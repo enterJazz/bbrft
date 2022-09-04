@@ -53,6 +53,8 @@ type Conn struct {
 
 	streams   map[messages.StreamID]*stream
 	streamsMu sync.RWMutex
+
+	options ConnOptions
 }
 
 // CloseStream will send a close message to the other peer indicating that the

@@ -24,6 +24,7 @@ func Dial(
 	l *zap.Logger,
 	addr string, // server address
 	downloadDir string,
+	options *ConnOptions,
 ) (*Conn, error) {
 	c := &Conn{
 		l:        l.With(log.FPeer("brft_client")),
@@ -32,12 +33,18 @@ func Dial(
 		streams:  make(map[messages.StreamID]*stream, 100),
 	}
 
+	if options == nil {
+		c.options = NewDefaultOptions(l)
+	} else {
+		c.options = *options
+	}
+
 	raddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("unable to resolve server address: %w", err)
 	}
 
-	c.conn, err = btp.Dial(*btp.NewDefaultOptions(l), nil, raddr, l)
+	c.conn, err = btp.Dial(c.options.btpOptions, nil, raddr, l)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create connection: %w", err)
 	}
@@ -49,7 +56,6 @@ func Dial(
 
 func (c *Conn) DownloadFile(
 	fileName string,
-	withCompression bool, // TODO: Replace by some options on the client
 ) error {
 	if !c.isClient {
 		return ErrExpectedClientConnection
@@ -94,10 +100,10 @@ func (c *Conn) DownloadFile(
 	}
 
 	// handle compression
-	if withCompression {
+	if c.options.GetPreferredCompression() != messages.CompressionReqHeaderAlgorithmReserved {
 		h := messages.NewCompressionReqOptionalHeader(
-			messages.CompressionReqHeaderAlgorithmGzip,
-			0, // -> 64kB // TODO: Make configurable
+			c.options.GetPreferredCompression(),
+			uint8(c.options.chunkSizeFactor),
 		)
 		req.OptHeaders = append(req.OptHeaders, h)
 		s.chunkSize = h.ChunkSize()
