@@ -45,10 +45,8 @@ type Conn struct {
 	// directory where the client downloads to
 	basePath string
 
-	streams      map[messages.StreamID]*stream
-	reqStreams   []*stream // TODO: Implement a ring buffer for the requested streams
-	streamsMu    sync.RWMutex
-	reqStreamsMu sync.RWMutex
+	streams   map[messages.StreamID]*stream
+	streamsMu sync.RWMutex
 }
 
 // CloseStream will send a close message to the other peer indicating that the
@@ -65,7 +63,6 @@ func (c *Conn) CloseStream(
 		if _, ok := c.streams[*sid]; !ok {
 			c.l.Warn("stream not found in streams",
 				zap.String("streams", spew.Sdump("\n", c.streams)),
-				zap.String("requested_streams", spew.Sdump("\n", c.reqStreams)),
 				zap.Uint16("stream_id", uint16(*sid)),
 			)
 		} else {

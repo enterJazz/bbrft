@@ -187,12 +187,26 @@ func (c *Conn) handleServerConnection() {
 // errors that should lead to closing the whole btp.Conn are returned.
 func (c *Conn) handleServerTransferNegotiation(req *messages.FileReq) error {
 
+	// make sure the streamID is not already taken
+	if c.isDuplicateStreamID(req.StreamID) {
+		c.l.Error("streamID already exists - closing stream")
+		// close the stream, but keep the connection open
+		// NOTE: The stream object has not yet been added to c.streams
+		// (i.e. no cleanup needed)
+		c.CloseStream(nil, messages.CloseReasonStreamIDTaken)
+		return nil
+	}
+
 	// create a new stream
-	id := c.newStreamID()
-	l := c.l.With(zap.Uint16("stream_id", uint16(id)))
+	l := c.l.With(
+		zap.Uint16("stream_id", uint16(req.StreamID)),
+		zap.String("remote_addr", c.conn.LocalAddr().String()),
+		zap.String("local_addr", c.conn.RemoteAddr().String()),
+		zap.Bool("client_conn", true),
+	)
 	s := stream{
 		l:                 l,
-		id:                id,
+		id:                req.StreamID,
 		fileName:          req.FileName,
 		requestedChecksum: req.Checksum,
 	}
@@ -440,8 +454,8 @@ func (c *Conn) sendData(s *stream) {
 
 // newStreamID generates a new unique streamID for the connection
 func (c *Conn) newStreamID() messages.StreamID {
-	if c.isClient {
-		c.l.Warn("only servers should generate new StreamIDs")
+	if !c.isClient {
+		c.l.Warn("only clients should generate new StreamIDs")
 	}
 
 	exists := false
@@ -458,6 +472,22 @@ func (c *Conn) newStreamID() messages.StreamID {
 			return newId
 		}
 	}
+}
+
+// newStreamID generates a new unique streamID for the connection
+func (c *Conn) isDuplicateStreamID(newId messages.StreamID) bool {
+	if !c.isClient {
+		c.l.Warn("only servers should have to check StreamIDs")
+	}
+
+	for id := range c.streams {
+		// apart from existing ids also disallow 0, since all sessionIDs
+		// will be that on by default
+		if newId == id || newId == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // TODO: Probably not needed

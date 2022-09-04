@@ -35,6 +35,8 @@ func (flags FileReqFlags) IsSet(flag FileReqFlag) bool {
 type FileReq struct {
 	// NOTE: The whole message has to be length delimeted in order to know how many bytes the receiver is supposed to read
 
+	StreamID StreamID
+
 	Flags FileReqFlags
 
 	// OptionalHeaders for the upcomming file transfer
@@ -47,8 +49,8 @@ type FileReq struct {
 }
 
 func (m *FileReq) baseSize() int {
-	// flags + file name length
-	return 1 + 1 + len([]byte(m.FileName)) + common.ChecksumSize
+	// streamID + flags + file name length
+	return 2 + 1 + 1 + len([]byte(m.FileName)) + common.ChecksumSize
 }
 
 func (m *FileReq) Encode(l *zap.Logger) ([]byte, error) {
@@ -73,6 +75,9 @@ func (m *FileReq) Encode(l *zap.Logger) ([]byte, error) {
 
 	// determine the length of the output
 	b := NewFixedBRFTMessageBuilderWithExtra(m, len(optHeaderBytes))
+
+	// write the streamID
+	b.AddUint16(uint16(m.StreamID))
 
 	// combine the flags
 	var flags FileReqFlag
@@ -103,6 +108,13 @@ func (m *FileReq) Decode(l *zap.Logger, s *cyberbyte.String) error {
 	// TODO: hand over the cyberbyte.String instead. This way we can easily
 	//		adapt the timeout when the RTT changes (i.e. reuse the same
 	// 		cyberbyte.String and maybe also set a timeout field on it)
+
+	// read the streamID
+	var streamID uint16
+	if err := s.ReadUint16(&streamID); err != nil {
+		return fmt.Errorf("unable to read streamID: %w", err)
+	}
+	m.StreamID = StreamID(streamID)
 
 	// read the flags
 	var joinedFlags uint8
