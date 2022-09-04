@@ -183,7 +183,7 @@ func (c *Conn) handleClientConnection() {
 			// unknown - however the question is how we know how long the
 			// message is in order to advance over it
 			if inMsg != nil {
-				closeConn(inMsg.String(), err)
+				closeConn(inMsg.Name(), err)
 			} else {
 				closeConn("could not read message_type", err)
 			}
@@ -219,7 +219,14 @@ func (c *Conn) handleClientConnection() {
 			}
 
 		case *messages.Close:
-			// TODO: close the stream, but not the connection
+			// TODO: handle gracefully
+			s := c.getStream(msg.StreamID)
+			if s != nil {
+				s.in <- msg
+			} else {
+				// TODO: We cannot remove the existing stream - we have to only send the close message!
+				c.CloseStream(nil, messages.CloseReasonUndefined)
+			}
 
 		case *messages.MetaResp:
 			// TODO: handle the packet and display it somehow
@@ -229,7 +236,7 @@ func (c *Conn) handleClientConnection() {
 			*messages.MetaReq:
 			c.l.Error("unexpected message type",
 				zap.Uint8("type_encoding", uint8(h.MessageType)),
-				zap.String("type", h.MessageType.String()),
+				zap.String("type", h.MessageType.Name()),
 			)
 			// TODO: maybe close
 
@@ -401,8 +408,8 @@ func (c *Conn) handleClientStream(s *stream) {
 		return
 	}
 
+	// FIXME: Add decompression
 	// TODO: Start waiting for Data packets
-dataLoop:
 	for {
 		var msg messages.BRFTMessage
 
@@ -417,10 +424,24 @@ dataLoop:
 		case *messages.Data:
 			s.f.Write(m.Data)
 		case *messages.Close:
-			// TODO: add more granular close handling here
-			c.CloseStream(&s.id, m.Reason)
-			s.l.Warn("file closed")
-			break dataLoop
+			if m.Reason == messages.CloseReasonTransferComplete {
+				// TODO: implement
+				// err := s.f.CheckChecksum()
+				// if err != nil {
+				// 	s.l.Error("unable to clean up file", zap.Error(err))
+				// 	return
+				// }
+
+				// clean up the file
+				s.l.Info("finished receiving file")
+				err := s.f.StripChecksum()
+				if err != nil {
+					s.l.Error("unable to clean up file", zap.Error(err))
+					return
+				}
+			}
+
+			return
 		default:
 			s.l.Warn("unexpected msg type received in stream", zap.String("packet", spew.Sdump("\n", st)))
 		}

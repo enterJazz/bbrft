@@ -19,7 +19,7 @@ type BRFTMessage interface {
 	baseSize() int
 
 	// get string representation of packet
-	String() string
+	Name() string
 }
 
 type StreamID uint16

@@ -34,7 +34,7 @@ func (m *MetaResp) baseSize() int {
 	return 0
 }
 
-func (m *MetaResp) String() string {
+func (m *MetaResp) Name() string {
 	return "MetaResp"
 }
 

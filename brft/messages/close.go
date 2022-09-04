@@ -30,7 +30,7 @@ type Close struct {
 	Reason   CloseReason
 }
 
-func (m *Close) String() string {
+func (m *Close) Name() string {
 	return fmt.Sprintf("Close Reason=%d, StreamID=%d", m.Reason, m.StreamID)
 }
 

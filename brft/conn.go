@@ -80,8 +80,8 @@ func (c *Conn) sendMessages(
 	c.wg.Add(1)
 	defer c.wg.Done()
 
+loop:
 	for {
-	loop:
 		time.Sleep(time.Nanosecond * 100) // TODO: Adjust
 		select {
 		case msg := <-outCtrl:
@@ -181,7 +181,7 @@ func (c *Conn) readMsg() (msg messages.BRFTMessage, h messages.PacketHeader, err
 	// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
 	err = msg.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
 	if err != nil {
-		err = fmt.Errorf("unable to decode %s: %w", msg.String(), err)
+		err = fmt.Errorf("unable to decode %s: %w", msg.Name(), err)
 		return
 	}
 

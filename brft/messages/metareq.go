@@ -26,7 +26,7 @@ func (m *MetaReq) baseSize() int {
 	return len([]byte(m.FileName))
 }
 
-func (m *MetaReq) String() string {
+func (m *MetaReq) Name() string {
 	return "MetaItemReq"
 }
 

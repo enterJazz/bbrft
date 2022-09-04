@@ -48,7 +48,7 @@ type FileReq struct {
 	Checksum []byte
 }
 
-func (m *FileReq) String() string {
+func (m *FileReq) Name() string {
 	return "FileReq"
 }
 

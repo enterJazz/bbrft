@@ -10,7 +10,7 @@ import (
 func TestTransfer(t *testing.T) {
 
 	ld, _ := log.NewLogger()
-	lp, err := log.NewLogger(log.WithProd(true))
+	lp, err := log.NewLogger(log.WithProd(false))
 	opt := &ServerOptions{NewDefaultOptions(lp)}
 	s, laddr, err := NewServer(ld, "127.0.0.1:1337", "../test/server", opt)
 	if err != nil {
@@ -26,7 +26,8 @@ func TestTransfer(t *testing.T) {
 	}()
 
 	t.Log(laddr.String())
-	c, err := Dial(ld, laddr.String(), "../test/downloads", nil)
+	optD := NewDefaultOptions(lp)
+	c, err := Dial(ld, laddr.String(), "../test/downloads", &optD)
 	if err != nil {
 		t.Error(err)
 	}

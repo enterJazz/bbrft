@@ -141,7 +141,11 @@ func (c *Conn) handleServerConnection() {
 			// TODO: maybe only return if we cannot read, not if the header is
 			// unknown - however the question is how we know how long the
 			// message is in order to advance over it
-			c.Close()
+			if inMsg != nil {
+				closeConn(inMsg.Name(), err)
+			} else {
+				closeConn("could not read message_type", err)
+			}
 			return
 		}
 
@@ -157,11 +161,13 @@ func (c *Conn) handleServerConnection() {
 					zap.String("local_addr", c.conn.RemoteAddr().String()),
 					zap.Bool("client_conn", false),
 				),
-				in: make(chan messages.BRFTMessage, 50),
+				id:        msg.StreamID,
+				chunkSize: messages.ComputeChunkSize(c.options.chunkSizeFactor),
+				in:        make(chan messages.BRFTMessage, 50),
 			}
 
 			// make sure the streamID is not already taken
-			if c.isDuplicateStreamID(msg.StreamID) {
+			if c.isDuplicateStreamID(s.id) {
 				c.l.Error("streamID already exists - closing stream")
 				// TODO: We cannot remove the existing stream - we have to only send the close message!
 				// close the stream, but keep the connection open
@@ -176,7 +182,7 @@ func (c *Conn) handleServerConnection() {
 			s.in <- msg
 
 			// handle the file transfer negotiation
-			c.handleServerStream(s)
+			go c.handleServerStream(s)
 			if err != nil {
 				closeConn("FileRequest", err)
 				return
@@ -204,7 +210,7 @@ func (c *Conn) handleServerConnection() {
 			*messages.MetaResp:
 			c.l.Error("unexpected message type",
 				zap.Uint8("type_encoding", uint8(h.MessageType)),
-				zap.String("type", h.MessageType.String()),
+				zap.String("type", h.MessageType.Name()),
 			)
 			// TODO: maybe close
 
@@ -323,16 +329,18 @@ func (c *Conn) handleServerStream(s *stream) {
 				break
 			}
 
-			// TODO: it would be nicer to have one compressor per Server
 			s.comp = compression.NewGzipCompressor(s.l)
-			s.chunkSize = v.ChunkSize()
 
 			if resp.FileSize < s.comp.MinFileSize() {
 				respOpt = messages.NewCompressionRespOptionalHeader(
 					messages.CompressionRespHeaderStatusFileTooSmall,
 				)
+				s.comp = nil
 				break
 			}
+
+			// TODO: it would be nicer to have one compressor per Server
+			s.chunkSize = v.ChunkSize()
 
 			respOpt = messages.NewCompressionRespOptionalHeader(
 				messages.CompressionRespHeaderStatusOk,
@@ -387,8 +395,6 @@ func (c *Conn) handleServerStream(s *stream) {
 			zap.Error(err),
 		)
 		// close the stream, but keep the connection open
-		// NOTE: The stream object has not yet been added to c.streams
-		// (i.e. no cleanup needed)
 		c.CloseStream(&s.id, messages.CloseReasonUndefined)
 		return
 	}
@@ -450,39 +456,101 @@ func (c *Conn) handleServerStream(s *stream) {
 		return
 	}
 
-	s.l.Debug("start sending data packets",
+	s.l.Debug("validated StartTransmission packet",
 		zap.String("start_transmission", spew.Sdump("\n", st)),
-		//TODO:  zap.String("packet", spew.Sdump("\n",resp)),
-		// TODO: zap.String("packet_encoded", spew.Sdump("\n",data)),
 	)
 
 	// start sending data from the file
 	for {
+		// TODO: assemble the packet
+		d := messages.Data{
+			StreamID: s.id,
+			Data:     make([]byte, s.chunkSize),
+		}
 
+		// TODO: read a chunk size from the file
+		lastPacket := false
+		n, err := s.f.Read(d.Data)
+		if err != nil {
+			s.l.Error("unable to read from file", zap.Error(err))
+
+			c.CloseStream(&s.id, messages.CloseReasonUndefined)
+			return
+		} else if n < len(d.Data) {
+			lastPacket = true
+			d.Data = d.Data[:n]
+		}
+
+		// TODO: optionally compress the data
+		if s.comp != nil {
+			d.Data, err = s.comp.Compress(d.Data)
+			if err != nil {
+				s.l.Error("unable to compress chunk", zap.Error(err))
+
+				c.CloseStream(&s.id, messages.CloseReasonUndefined)
+				return
+			}
+		}
+
+		data, err := d.Encode(s.l)
+		if err != nil {
+			c.l.Error("unable to encode Data",
+				zap.String("packet", spew.Sdump("\n", d)),
+				zap.Error(err),
+			)
+			// close the stream, but keep the connection open
+			c.CloseStream(&s.id, messages.CloseReasonUndefined)
+			return
+		}
+
+		s.l.Info("sending Data packet",
+			zap.String("packet", spew.Sdump("\n", d)),
+			zap.String("packet_encoded", spew.Sdump("\n", data)),
+		)
+
+		// TODO: maybe introduce a high timeout (~ 10s)
+		// send the data to the sender routing
+		select {
+		case c.outData <- data:
+		case <-c.close:
+			s.l.Info("stopping data stream")
+			return
+		}
+
+		if lastPacket {
+			// sent last packet
+			s.l.Info("sent last packet") // TODO: enrich
+			// TODO: maybe introduce a high timeout (~ 10s)
+			// send the data to the sender routing
+			cl := messages.Close{
+				StreamID: s.id,
+				Reason:   messages.CloseReasonTransferComplete,
+			}
+			data, err := cl.Encode(s.l)
+			if err != nil {
+				c.l.Error("unable to encode Close",
+					zap.String("packet", spew.Sdump("\n", cl)),
+					zap.Error(err),
+				)
+				// close the stream, but keep the connection open
+				c.CloseStream(&s.id, messages.CloseReasonUndefined)
+				return
+			}
+
+			select {
+			// This actually must co in data channel to be guaranteed to be
+			// after the last Data packet
+			case c.outData <- data:
+			case <-c.close:
+				s.l.Info("stopping data stream")
+				return
+			}
+
+			// TODO: use close stream!
+			// c.CloseStream(&s.id, messages.CloseReasonTransferComplete)
+			return
+		}
 	}
-}
-
-// TODO: somehow we should block other routines from sending as well or even modify the stream
-// 		Maybe:
-//			- sendData returns channels: cancel (to close from the Conn)
-//			- remove the stream from c.streams
-
-func (c *Conn) sendData(s *stream) {
-
-	// TODO: Implement
-	// if s.isSending {
-	// 	return ErrStreamIsSending
-	// }
-
-	// for {
-	// 	// TODO: read a chunk size from the file
-
-	// 	// TODO: optionally compress the data
-
-	// 	// TODO: assemble the packet
-
-	// 	// TODO: send the packet
-	// }
 }
 
 // newStreamID generates a new unique streamID for the connection

@@ -227,8 +227,9 @@ func (f *File) StripChecksum() error {
 		return err
 	}
 
+	// TODO: FIXME:
 	// write the remainder of the file to a temporary file
-	tmpFile, err := os.CreateTemp("", "*.brft")
+	tmpFile, err := os.CreateTemp("../test/downloads/", "*.brft")
 	if err != nil {
 		return err
 	}
@@ -240,6 +241,11 @@ func (f *File) StripChecksum() error {
 
 	tmpFile.Close()
 	f.f.Close()
+
+	err = os.Rename(tmpFile.Name(), f.f.Name())
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -256,7 +262,7 @@ func readChecksum(f *os.File) ([]byte, error) {
 	}
 
 	// TODO: Maybe make lenght delimeted
-	checksum := make([]byte, shared.ChecksumSize)
+	checksum := make([]byte, common.ChecksumSize)
 	if n, err := f.Read(checksum); err != nil {
 		return nil, err
 	} else if n != len(checksum) {

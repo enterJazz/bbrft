@@ -56,6 +56,9 @@ func NewLogger(opts ...Option) (*zap.Logger, error) {
 		conf.Encoding = "pretty-console"
 	}
 
+	// TODO: Revert
+	conf.Level = zap.NewAtomicLevel()
+
 	return conf.Build()
 }
 

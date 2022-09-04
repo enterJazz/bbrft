@@ -194,7 +194,12 @@ func (h *CompressionReqOptionalHeader) ChunkSize() int {
 	if h == nil {
 		return 0
 	}
-	return (int(h.ChunkSizeMultiplier) + 1) * 64 * 1024
+	return ComputeChunkSize(h.ChunkSizeMultiplier)
+}
+
+// TODO: move
+func ComputeChunkSize(mult uint8) int {
+	return (int(mult) + 1) * 64 * 1024
 }
 
 type CompressionRespHeaderStatus uint8
