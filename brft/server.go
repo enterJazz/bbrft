@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net"
 	"os"
 
 	"github.com/davecgh/go-spew/spew"
@@ -17,27 +18,49 @@ import (
 	"go.uber.org/zap"
 )
 
+type ServerOptions struct {
+	ConnOptions
+}
+
 type Server struct {
 	l *zap.Logger
 
 	listener *btp.Listener
+	numConns int
 
 	// base path to the directory where the files are located
 	basePath string
 
-	numConns int
+	options ServerOptions
 }
 
 func NewServer(
 	l *zap.Logger,
-	listener *btp.Listener,
+	listen_addr string,
 	basePath string,
-) *Server {
+	options *ServerOptions,
+) (*Server, *net.UDPAddr, error) {
+	opt := options
+	if opt == nil {
+		opt = &ServerOptions{NewDefaultOptions(l)}
+	}
+
+	laddr, err := net.ResolveUDPAddr(opt.btpOptions.Network, listen_addr)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	listener, err := btp.Listen(opt.btpOptions, laddr, l)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	return &Server{
 		l:        l.With(log.FPeer("brft_server")),
 		listener: listener,
 		basePath: basePath,
-	}
+		options:  *opt,
+	}, laddr, nil
 }
 
 func (s *Server) Close() error {
@@ -77,6 +100,7 @@ func (s *Server) ListenAndServe() error {
 			basePath: s.basePath,
 			isClient: false,
 			streams:  make(map[messages.StreamID]*stream, 100),
+			options:  s.options.ConnOptions,
 		}
 
 		// handle the connection

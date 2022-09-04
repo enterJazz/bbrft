@@ -49,6 +49,8 @@ type Conn struct {
 	reqStreams   []*stream // TODO: Implement a ring buffer for the requested streams
 	streamsMu    sync.RWMutex
 	reqStreamsMu sync.RWMutex
+
+	options ConnOptions
 }
 
 // CloseStream will send a close message to the other peer indicating that the
