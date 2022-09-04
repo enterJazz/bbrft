@@ -18,6 +18,10 @@ func (m *Data) baseSize() int {
 	return 2 + 3 + len(m.Data)
 }
 
+func (m *Data) String() string {
+	return fmt.Sprintf("Data len=%d", len(m.Data))
+}
+
 func (m *Data) Encode(l *zap.Logger) ([]byte, error) {
 	b := NewFixedBRFTMessageBuilder(m)
 

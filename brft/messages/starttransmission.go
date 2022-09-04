@@ -21,6 +21,10 @@ func (m *StartTransmission) baseSize() int {
 	return 2 + common.ChecksumSize + 8
 }
 
+func (m *StartTransmission) String() string {
+	return "StartTransmission"
+}
+
 func (m *StartTransmission) Encode(l *zap.Logger) ([]byte, error) {
 	b := NewFixedBRFTMessageBuilder(m)
 

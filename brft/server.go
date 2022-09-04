@@ -13,7 +13,6 @@ import (
 	"gitlab.lrz.de/bbrft/brft/compression"
 	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/btp"
-	"gitlab.lrz.de/bbrft/cyberbyte"
 	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
@@ -127,7 +126,7 @@ func (c *Conn) handleServerConnection() {
 
 	// wait for incomming messages
 	for {
-		h, err := c.readHeader()
+		inMsg, h, err := c.readMsg()
 		if err != nil {
 			// errors already handled by function
 			// TODO: maybe only return if we cannot read, not if the header is
@@ -139,37 +138,18 @@ func (c *Conn) handleServerConnection() {
 
 		// handle the message here to make sure that the whole read happens in
 		// on go (multiple concurrent reads could lead to nasty mixups)
-		switch h.MessageType {
-		case messages.MessageTypeFileReq:
-			// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
-			// decode the packet
-			req := new(messages.FileReq)
-			err := req.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
-			if err != nil {
-				closeConn("FileRequest", fmt.Errorf("unable to decode FileRequest: %w", err))
-				return
-			}
-
+		switch msg := inMsg.(type) {
+		case *messages.FileReq:
 			// handle the file transfer negotiation
-
-			err = c.newServerSession(req)
+			err = c.newServerSession(msg)
 			if err != nil {
 				closeConn("FileRequest", err)
 				return
 			}
 
-		case messages.MessageTypeStartTransmission:
-			// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
-			// decode the packet
-			st := new(messages.StartTransmission)
-			err := st.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
-			if err != nil {
-				closeConn("StartTransmission", fmt.Errorf("unable to decode StartTransmission: %w", err))
-				return
-			}
-
+		case *messages.StartTransmission:
 			// handle the file transfer negotiation
-			err = c.handleServerTransmissionStart(st)
+			err = c.handleServerTransmissionStart(msg)
 			if err != nil {
 				closeConn("StartTransmission", err)
 				return
@@ -177,15 +157,15 @@ func (c *Conn) handleServerConnection() {
 
 			// TODO: Remove
 			return
-		case messages.MessageTypeClose:
+		case *messages.Close:
 			// TODO: Close the stream, but not the connection
 
-		case messages.MessageTypeMetaDataReq:
+		case *messages.MetaReq:
 			// TODO: handle the request (concurrently?)
 
-		case messages.MessageTypeFileResp,
-			messages.MessageTypeData,
-			messages.MessageTypeMetaDataResp:
+		case *messages.FileResp,
+			*messages.Data,
+			*messages.MetaResp:
 			c.l.Error("unexpected message type",
 				zap.Uint8("type_encoding", uint8(h.MessageType)),
 				zap.String("type", h.MessageType.String()),

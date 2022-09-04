@@ -34,6 +34,10 @@ func (m *MetaResp) baseSize() int {
 	return 0
 }
 
+func (m *MetaResp) String() string {
+	return "MetaResp"
+}
+
 func (m *MetaResp) Encode(l *zap.Logger) ([]byte, error) {
 	// again, make sure that there are not too many items
 	numItems := len(m.Items)

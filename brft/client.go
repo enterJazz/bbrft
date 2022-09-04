@@ -10,7 +10,6 @@ import (
 	"gitlab.lrz.de/bbrft/brft/compression"
 	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/btp"
-	"gitlab.lrz.de/bbrft/cyberbyte"
 	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
@@ -135,7 +134,7 @@ func (c *Conn) DownloadFile(
 	c.streamsMu.Unlock()
 
 	// start handling of the stream
-	c.handleStream(s)
+	c.handleClientStream(s)
 
 	// clean up the stream corresponding to the requested file after a set
 	// amount of time
@@ -173,37 +172,30 @@ func (c *Conn) handleClientConnection() {
 	go c.sendMessages(c.outCtrl, c.outData)
 
 	for {
-		h, err := c.readHeader()
+		inMsg, h, err := c.readMsg()
 		if err != nil {
 			// errors already handled by function
 			// TODO: maybe only return if we cannot read, not if the header is
 			// unknown - however the question is how we know how long the
 			// message is in order to advance over it
-			c.Close()
+			if inMsg != nil {
+				closeConn(inMsg.String(), err)
+			} else {
+				closeConn("could not read message_type", err)
+			}
 			return
 		}
 
 		// handle the message here to make sure that the whole read happens in
 		// on go (multiple concurrent reads could lead to nasty mixups)
-		switch h.MessageType {
-		case messages.MessageTypeFileResp:
-
-			// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
-			// decode the packet
-			resp := new(messages.FileResp)
-			err := resp.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
-			if err != nil {
-				closeConn("FileResponse", fmt.Errorf("unable to decode FileResponse: %w", err))
-				return
-			}
-
-			c.streamsMu.RLock()
-			if s, ok := c.streams[resp.StreamID]; !ok {
-				c.CloseStream(nil, messages.CloseReasonUndefined)
+		switch msg := inMsg.(type) {
+		case *messages.FileResp:
+			s := c.getStream(msg.StreamID)
+			if s != nil {
+				s.in <- msg
 			} else {
-				s.in <- resp
+				c.CloseStream(nil, messages.CloseReasonUndefined)
 			}
-			c.streamsMu.RUnlock()
 
 			// handle the file transfer negotiation
 			// err = c.handleClientTransferNegotiation(resp)
@@ -212,18 +204,18 @@ func (c *Conn) handleClientConnection() {
 			// 	return
 			// }
 
-		case messages.MessageTypeData:
-			// TODO: handle the packet and save it to the correct file
+		case *messages.Data:
+			// find matching stream
 
-		case messages.MessageTypeClose:
+		case *messages.Close:
 			// TODO: close the stream, but not the connection
 
-		case messages.MessageTypeMetaDataResp:
+		case *messages.MetaResp:
 			// TODO: handle the packet and display it somehow
 
-		case messages.MessageTypeFileReq,
-			messages.MessageTypeStartTransmission,
-			messages.MessageTypeMetaDataReq:
+		case *messages.FileReq,
+			*messages.StartTransmission,
+			*messages.MetaReq:
 			c.l.Error("unexpected message type",
 				zap.Uint8("type_encoding", uint8(h.MessageType)),
 				zap.String("type", h.MessageType.String()),
@@ -249,7 +241,7 @@ func (c *Conn) handleClientConnection() {
 // The function might close the stream and remove any information about it
 // remaining on the Conn if a non-critical error occurs. As such, only critical
 // errors that should lead to closing the whole btp.Conn are returned.
-func (c *Conn) handleStream(s *stream) {
+func (c *Conn) handleClientStream(s *stream) {
 
 	c.wg.Add(1)
 	defer c.wg.Done()
@@ -372,7 +364,7 @@ func (c *Conn) handleStream(s *stream) {
 		st.Offset = s.offset
 	}
 
-	data, err := st.Encode(s.l)
+	startReq, err := st.Encode(s.l)
 	if err != nil {
 		c.l.Error("unable to encode StartTransmission",
 			zap.String("packet", spew.Sdump("\n", st)),
@@ -386,14 +378,40 @@ func (c *Conn) handleStream(s *stream) {
 	s.l.Debug("sending StartTransmission",
 		zap.String("file_response", spew.Sdump("\n", resp)),
 		zap.String("packet", spew.Sdump("\n", st)),
-		zap.String("packet_encoded", spew.Sdump("\n", data)),
+		zap.String("packet_encoded", spew.Sdump("\n", startReq)),
 	)
 
 	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
-	c.outCtrl <- data
+	select {
+	case <-c.close:
+		s.l.Warn("closed before stream started")
+		return
+	case c.outCtrl <- startReq:
+	}
 
 	// TODO: Start waiting for Data packets
+dataLoop:
+	for {
+		var msg messages.BRFTMessage
 
-	return
+		select {
+		case msg = <-s.in:
+		case <-c.close:
+			s.l.Warn("closed before stream started")
+			return
+		}
+
+		switch m := msg.(type) {
+		case *messages.Data:
+			s.f.Write(m.Data)
+		case *messages.Close:
+			// TODO: add more granular close handling here
+			c.CloseStream(&s.id, m.Reason)
+			s.l.Warn("file closed")
+			break dataLoop
+		default:
+			s.l.Warn("unexpected msg type received in stream", zap.String("packet", spew.Sdump("\n", st)))
+		}
+	}
 }

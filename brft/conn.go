@@ -5,39 +5,11 @@ import (
 	"sync"
 
 	"github.com/davecgh/go-spew/spew"
-	"gitlab.lrz.de/bbrft/brft/compression"
 	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/btp"
+	"gitlab.lrz.de/bbrft/cyberbyte"
 	"go.uber.org/zap"
 )
-
-// create a new connection object
-type stream struct {
-	l *zap.Logger
-
-	id messages.StreamID
-
-	// TODO: all of the below needs to be initialized in the server handling
-	// file
-	f                 *File
-	fileName          string // only needed during neogtiation
-	requestedChecksum []byte // only needed during neogtiation
-
-	// compression
-	comp      compression.Compressor
-	chunkSize int
-
-	// resumption
-	isResumption bool
-	offset       uint64
-
-	handshakeDone bool
-
-	// FIXME: actually use
-
-	// handle incomming and outgoing messages
-	in chan messages.BRFTMessage
-}
 
 type Conn struct {
 	l *zap.Logger
@@ -171,4 +143,42 @@ func (c *Conn) readHeader() (messages.PacketHeader, error) {
 	}
 
 	return h, nil
+}
+
+func (c *Conn) readMsg() (msg messages.BRFTMessage, h messages.PacketHeader, err error) {
+
+	h, err = c.readHeader()
+	if err != nil {
+		return
+	}
+
+	switch h.MessageType {
+	case messages.MessageTypeFileReq:
+		msg = new(messages.FileReq)
+	case messages.MessageTypeFileResp:
+		msg = new(messages.FileResp)
+	case messages.MessageTypeData:
+		msg = new(messages.Data)
+	case messages.MessageTypeStartTransmission:
+		// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
+		// decode the packet
+		msg = new(messages.StartTransmission)
+	case messages.MessageTypeClose:
+		msg = new(messages.Close)
+	case messages.MessageTypeMetaDataReq:
+		msg = new(messages.MetaReq)
+	case messages.MessageTypeMetaDataResp:
+		msg = new(messages.MetaResp)
+	default:
+		err = fmt.Errorf("uknown packet header received MessageType=%d", h.MessageType)
+		return
+	}
+
+	err = msg.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
+	if err != nil {
+		err = fmt.Errorf("unable to decode StartTransmission: %w", err)
+		return
+	}
+
+	return
 }
