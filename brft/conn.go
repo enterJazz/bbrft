@@ -32,6 +32,12 @@ type stream struct {
 	offset       uint64
 
 	handshakeDone bool
+
+	// FIXME: actually use
+	// handle incomming and outgoing messages
+	in      chan messages.BRFTMessage
+	outCtrl chan []byte
+	outData chan []byte
 }
 
 type Conn struct {

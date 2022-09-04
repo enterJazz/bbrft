@@ -127,7 +127,8 @@ func (c *Conn) handleServerConnection() {
 			}
 
 			// handle the file transfer negotiation
-			err = c.handleServerTransferNegotiation(req)
+
+			err = c.newServerSession(req)
 			if err != nil {
 				closeConn("FileRequest", err)
 				return
@@ -176,6 +177,8 @@ func (c *Conn) handleServerConnection() {
 	}
 }
 
+// TODO: Update comment
+// FIXME: actually use the channels
 // handleServerTransferNegotiation handles an incomming FileReq packet and
 // sends a FileResponse packet if possible. For this, a new stream is created
 // and added to the Conn. Since the client cannot create an association between
@@ -185,7 +188,7 @@ func (c *Conn) handleServerConnection() {
 // The function might close the stream and remove any information about it
 // remaining on the Conn if a non-critical error occurs. As such, only critical
 // errors that should lead to closing the whole btp.Conn are returned.
-func (c *Conn) handleServerTransferNegotiation(req *messages.FileReq) error {
+func (c *Conn) newServerSession(req *messages.FileReq) error {
 
 	// make sure the streamID is not already taken
 	if c.isDuplicateStreamID(req.StreamID) {
@@ -458,6 +461,9 @@ func (c *Conn) newStreamID() messages.StreamID {
 		c.l.Warn("only clients should generate new StreamIDs")
 	}
 
+	c.streamsMu.RLock()
+	c.streamsMu.RUnlock()
+
 	exists := false
 	for {
 		newId := messages.StreamID(rand.Uint32())
@@ -479,6 +485,9 @@ func (c *Conn) isDuplicateStreamID(newId messages.StreamID) bool {
 	if !c.isClient {
 		c.l.Warn("only servers should have to check StreamIDs")
 	}
+
+	c.streamsMu.RLock()
+	c.streamsMu.RUnlock()
 
 	for id := range c.streams {
 		// apart from existing ids also disallow 0, since all sessionIDs
