@@ -34,10 +34,9 @@ type stream struct {
 	handshakeDone bool
 
 	// FIXME: actually use
+
 	// handle incomming and outgoing messages
-	in      chan messages.BRFTMessage
-	outCtrl chan []byte
-	outData chan []byte
+	in chan messages.BRFTMessage
 }
 
 type Conn struct {
@@ -51,8 +50,18 @@ type Conn struct {
 	// directory where the client downloads to
 	basePath string
 
-	streams   map[messages.StreamID]*stream
-	streamsMu sync.RWMutex
+	streams      map[messages.StreamID]*stream
+	streamsMu    sync.RWMutex
+	streamsWg    *sync.WaitGroup
+	streamsClose chan struct{}
+
+	// synchronization between routines
+	wg    *sync.WaitGroup
+	close chan struct{}
+
+	// buffers for sending data
+	outCtrl chan []byte
+	outData chan []byte
 
 	options ConnOptions
 }

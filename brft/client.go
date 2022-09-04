@@ -31,6 +31,8 @@ func Dial(
 		basePath: downloadDir, // TODO: Make sure that it actually exists / create it
 		isClient: true,
 		streams:  make(map[messages.StreamID]*stream, 100),
+		outCtrl:  make(chan []byte, 100),
+		outData:  make(chan []byte, 100),
 	}
 
 	if options == nil {
@@ -97,6 +99,7 @@ func (c *Conn) DownloadFile(
 		requestedChecksum: req.Checksum,
 		//isResumption: , TODO: set
 		//offset: , TODO: set
+		in: make(chan messages.BRFTMessage, 50),
 	}
 
 	// handle compression
@@ -132,7 +135,7 @@ func (c *Conn) DownloadFile(
 	c.streamsMu.Unlock()
 
 	// start handling of the stream
-	// TODO: c.handleStream(s)
+	c.handleStream(s)
 
 	// clean up the stream corresponding to the requested file after a set
 	// amount of time
@@ -165,6 +168,9 @@ func (c *Conn) handleClientConnection() {
 		}
 	}
 
+	// start routine for coordinating the sending messages
+	go c.sendMessages(c.outCtrl, c.outData)
+
 	for {
 		h, err := c.readHeader()
 		if err != nil {
@@ -186,16 +192,24 @@ func (c *Conn) handleClientConnection() {
 			resp := new(messages.FileResp)
 			err := resp.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
 			if err != nil {
-				closeConn("FileResponse", fmt.Errorf("unanable to decode FileResponse: %w", err))
+				closeConn("FileResponse", fmt.Errorf("unable to decode FileResponse: %w", err))
 				return
 			}
 
-			// handle the file transfer negotiation
-			err = c.handleClientTransferNegotiation(resp)
-			if err != nil {
-				closeConn("FileResponse", err)
-				return
+			c.streamsMu.RLock()
+			if s, ok := c.streams[resp.StreamID]; !ok {
+				c.CloseStream(nil, messages.CloseReasonUndefined)
+			} else {
+				s.in <- resp
 			}
+			c.streamsMu.RUnlock()
+
+			// handle the file transfer negotiation
+			// err = c.handleClientTransferNegotiation(resp)
+			// if err != nil {
+			// 	closeConn("FileResponse", err)
+			// 	return
+			// }
 
 		case messages.MessageTypeData:
 			// TODO: handle the packet and save it to the correct file
@@ -225,6 +239,29 @@ func (c *Conn) handleClientConnection() {
 	}
 }
 
+func (c *Conn) sendMessages(
+	outCtrl chan []byte,
+	outData chan []byte,
+) {
+
+loop:
+	for {
+		select {
+		case msg := <-outCtrl:
+			c.conn.Write(msg)
+			goto loop
+		default:
+		}
+
+		select {
+		case msg := <-outData:
+			c.conn.Write(msg)
+		default:
+		}
+	}
+}
+
+// TODO: update comment
 // handleClientTransferNegotiation handles an incomming FileResp packet and
 // sends a StartTransmission packet if possible. It uses the stream saved in
 // c.reqStreams[0]. Because of this is has to be made sure that the streams are
@@ -233,21 +270,7 @@ func (c *Conn) handleClientConnection() {
 // The function might close the stream and remove any information about it
 // remaining on the Conn if a non-critical error occurs. As such, only critical
 // errors that should lead to closing the whole btp.Conn are returned.
-func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
-
-	// get the next stream without a response yet
-	c.streamsMu.Lock()
-	s, ok := c.streams[resp.StreamID]
-	c.streamsMu.Unlock()
-	if !ok {
-		c.l.Error("no file request found for FileResponse message",
-			zap.String("streams", spew.Sdump("\n", c.streams)),
-		)
-
-		// close the stream, but keep the connection open
-		c.CloseStream(&s.id, messages.CloseReasonUndefined)
-		return nil
-	}
+func (c *Conn) handleStream(s *stream) error {
 
 	// update the stream
 	s.l = s.l.With(
@@ -256,9 +279,28 @@ func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 		zap.Bool("client_conn", true),
 	)
 
+	// TODO: wait for incomming messages
+	var resp *messages.FileResp
+
+	var msg messages.BRFTMessage
+	select {
+	case msg = <-s.in:
+	case <-s.close:
+		c.wg.Done()
+	}
+
+	// make sure its a FileResponse
+	switch v := msg.(type) {
+	case *messages.FileResp:
+		resp = v
+	default:
+		c.CloseStream(&s.id, messages.CloseReasonUndefined)
+		return nil
+	}
+
 	// set & check the checksum
 	if !bytes.Equal(s.requestedChecksum, make([]byte, common.ChecksumSize)) &&
-		!bytes.Equal(s.requestedChecksum, s.f.Checksum()) {
+		!bytes.Equal(s.requestedChecksum, resp.Checksum) {
 		// TODO: potentially add a dialogue to allow the resumption of the download
 		s.l.Error("checksums do not match",
 			zap.String("requestedChecksum", spew.Sdump("\n", s.requestedChecksum)),
@@ -271,7 +313,6 @@ func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 	}
 
 	// check the optional headers
-
 	for _, opt := range resp.OptHeaders {
 		// handl ethe optional header according to its type
 		switch v := opt.(type) {
@@ -328,7 +369,7 @@ func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 		)
 		// close the stream, but keep the connection open´
 		c.CloseStream(&s.id, messages.CloseReasonUndefined) // there's only a reason for files that are too big
-		return fmt.Errorf("unable to initialize file: %w", err)
+		return nil
 	}
 
 	st := messages.StartTransmission{
@@ -347,7 +388,7 @@ func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 
 	data, err := st.Encode(s.l)
 	if err != nil {
-		c.l.Error("unanable to encode StartTransmission",
+		c.l.Error("unable to encode StartTransmission",
 			zap.String("packet", spew.Sdump("\n", st)),
 			zap.Error(err),
 		)
@@ -362,11 +403,17 @@ func (c *Conn) handleClientTransferNegotiation(resp *messages.FileResp) error {
 		zap.String("packet_encoded", spew.Sdump("\n", data)),
 	)
 
+	c.conn
+
 	_, err = c.conn.Write(data)
 	if err != nil {
-		// actually close the whole connection TODO: is that correct?
-		return fmt.Errorf("unanable to write StartTransmission: %w", err)
+		// actually close the whole connection
+		s.l.Error("unable to write StartTransmission", zap.Error(err))
+		close(s.close)
+		return nil
 	}
+
+	// TODO: Start waiting for Data packets
 
 	// add the updated stream to the connection
 	c.streamsMu.Lock()
