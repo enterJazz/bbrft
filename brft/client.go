@@ -44,7 +44,7 @@ func Dial(
 		return nil, fmt.Errorf("unable to resolve server address: %w", err)
 	}
 
-	c.conn, err = btp.Dial(options.btpOptions, nil, raddr, l)
+	c.conn, err = btp.Dial(c.options.btpOptions, nil, raddr, l)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create connection: %w", err)
 	}
