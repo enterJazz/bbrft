@@ -99,8 +99,45 @@ func (c *Conn) CloseStream(
 func (c *Conn) Close() error {
 	// TODO: Close all the (remaining) streams
 
+	// wait for the streams
+	c.wg.Wait()
+
 	// close the btp.Conn
 	return c.conn.Close()
+}
+
+func (c *Conn) sendMessages(
+	outCtrl chan []byte,
+	outData chan []byte,
+) {
+
+loop:
+	for {
+		select {
+		case msg := <-outCtrl:
+			_, err := c.conn.Write(msg)
+			if err != nil {
+				// actually close the whole connection
+				c.l.Error("unable to write data", zap.Error(err))
+				close(c.close)
+				return
+			}
+			goto loop
+		default:
+		}
+
+		select {
+		case msg := <-outData:
+			_, err := c.conn.Write(msg)
+			if err != nil {
+				// actually close the whole connection
+				c.l.Error("unable to write data", zap.Error(err))
+				close(c.close)
+				return
+			}
+		default:
+		}
+	}
 }
 
 func (c *Conn) readHeader() (messages.PacketHeader, error) {

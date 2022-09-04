@@ -157,6 +157,7 @@ func (c *Conn) DownloadFile(
 // read the whole message from the btp.Conn
 func (c *Conn) handleClientConnection() {
 	closeConn := func(messageType string, err error) {
+		close(c.close)
 		c.l.Error("unable to handle packet - closing connection",
 			zap.String("message_type", messageType),
 			zap.Error(err),
@@ -239,28 +240,6 @@ func (c *Conn) handleClientConnection() {
 	}
 }
 
-func (c *Conn) sendMessages(
-	outCtrl chan []byte,
-	outData chan []byte,
-) {
-
-loop:
-	for {
-		select {
-		case msg := <-outCtrl:
-			c.conn.Write(msg)
-			goto loop
-		default:
-		}
-
-		select {
-		case msg := <-outData:
-			c.conn.Write(msg)
-		default:
-		}
-	}
-}
-
 // TODO: update comment
 // handleClientTransferNegotiation handles an incomming FileResp packet and
 // sends a StartTransmission packet if possible. It uses the stream saved in
@@ -270,7 +249,10 @@ loop:
 // The function might close the stream and remove any information about it
 // remaining on the Conn if a non-critical error occurs. As such, only critical
 // errors that should lead to closing the whole btp.Conn are returned.
-func (c *Conn) handleStream(s *stream) error {
+func (c *Conn) handleStream(s *stream) {
+
+	c.wg.Add(1)
+	defer c.wg.Done()
 
 	// update the stream
 	s.l = s.l.With(
@@ -279,23 +261,27 @@ func (c *Conn) handleStream(s *stream) error {
 		zap.Bool("client_conn", true),
 	)
 
-	// TODO: wait for incomming messages
-	var resp *messages.FileResp
-
+	// wait for incomming messages
 	var msg messages.BRFTMessage
 	select {
 	case msg = <-s.in:
-	case <-s.close:
-		c.wg.Done()
+	case <-c.close:
+		s.l.Info("stopping stream")
+		return
 	}
 
 	// make sure its a FileResponse
+	var resp *messages.FileResp
 	switch v := msg.(type) {
 	case *messages.FileResp:
 		resp = v
 	default:
+		s.l.Error("unexpected message type",
+			zap.String("expected_message_type", "FileResp"),
+			zap.String("actual_message", spew.Sdump("\n", v)),
+		)
 		c.CloseStream(&s.id, messages.CloseReasonUndefined)
-		return nil
+		return
 	}
 
 	// set & check the checksum
@@ -309,7 +295,7 @@ func (c *Conn) handleStream(s *stream) error {
 
 		// close the stream, but keep the connection open
 		c.CloseStream(&s.id, messages.CloseReasonChecksumInvalid)
-		return nil
+		return
 	}
 
 	// check the optional headers
@@ -336,7 +322,7 @@ func (c *Conn) handleStream(s *stream) error {
 
 			// close the stream, but keep the connection open
 			c.CloseStream(&s.id, messages.CloseReasonUnexpectedOptionalHeader)
-			return nil
+			return
 
 		case *messages.UnknownOptionalHeader:
 			c.l.Error("got an unkown optional header type",
@@ -345,7 +331,7 @@ func (c *Conn) handleStream(s *stream) error {
 
 			// close the stream, but keep the connection open
 			c.CloseStream(&s.id, messages.CloseReasonUnsupportedOptionalHeader)
-			return nil
+			return
 
 		default:
 			c.l.Error("unexpected optional header type [implementation error]",
@@ -354,7 +340,7 @@ func (c *Conn) handleStream(s *stream) error {
 
 			// close the stream, but keep the connection open
 			c.CloseStream(&s.id, messages.CloseReasonUnsupportedOptionalHeader)
-			return nil
+			return
 		}
 	}
 
@@ -369,7 +355,7 @@ func (c *Conn) handleStream(s *stream) error {
 		)
 		// close the stream, but keep the connection open´
 		c.CloseStream(&s.id, messages.CloseReasonUndefined) // there's only a reason for files that are too big
-		return nil
+		return
 	}
 
 	st := messages.StartTransmission{
@@ -394,7 +380,7 @@ func (c *Conn) handleStream(s *stream) error {
 		)
 		// close the stream, but keep the connection open
 		c.CloseStream(&s.id, messages.CloseReasonUndefined)
-		return nil
+		return
 	}
 
 	s.l.Debug("sending StartTransmission",
@@ -403,22 +389,11 @@ func (c *Conn) handleStream(s *stream) error {
 		zap.String("packet_encoded", spew.Sdump("\n", data)),
 	)
 
-	c.conn
-
-	_, err = c.conn.Write(data)
-	if err != nil {
-		// actually close the whole connection
-		s.l.Error("unable to write StartTransmission", zap.Error(err))
-		close(s.close)
-		return nil
-	}
+	// TODO: maybe introduce a high timeout (~ 10s)
+	// send the data to the sender routing
+	c.outCtrl <- data
 
 	// TODO: Start waiting for Data packets
 
-	// add the updated stream to the connection
-	c.streamsMu.Lock()
-	c.streams[s.id] = s
-	c.streamsMu.Unlock()
-
-	return nil
+	return
 }

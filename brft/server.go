@@ -146,7 +146,7 @@ func (c *Conn) handleServerConnection() {
 			req := new(messages.FileReq)
 			err := req.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
 			if err != nil {
-				closeConn("FileRequest", fmt.Errorf("unanable to decode FileRequest: %w", err))
+				closeConn("FileRequest", fmt.Errorf("unable to decode FileRequest: %w", err))
 				return
 			}
 
@@ -164,7 +164,7 @@ func (c *Conn) handleServerConnection() {
 			st := new(messages.StartTransmission)
 			err := st.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
 			if err != nil {
-				closeConn("StartTransmission", fmt.Errorf("unanable to decode StartTransmission: %w", err))
+				closeConn("StartTransmission", fmt.Errorf("unable to decode StartTransmission: %w", err))
 				return
 			}
 
@@ -372,7 +372,7 @@ func (c *Conn) newServerSession(req *messages.FileReq) error {
 	// send the response
 	data, err := resp.Encode(l)
 	if err != nil {
-		c.l.Error("unanable to encode FileResponse",
+		c.l.Error("unable to encode FileResponse",
 			zap.String("packet", spew.Sdump("\n", resp)),
 			zap.Error(err),
 		)
@@ -392,7 +392,7 @@ func (c *Conn) newServerSession(req *messages.FileReq) error {
 	_, err = c.conn.Write(data)
 	if err != nil {
 		// actually close the whole connection TODO: is that correct?
-		return fmt.Errorf("unanable to write FileResponse: %w", err)
+		return fmt.Errorf("unable to write FileResponse: %w", err)
 	}
 
 	// add the stream to the connection
