@@ -3,6 +3,7 @@ package brft
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	"gitlab.lrz.de/bbrft/brft/compression"
@@ -11,6 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// TODO: Add a close for the stream
 // create a new connection object
 type stream struct {
 	l *zap.Logger
@@ -50,19 +52,16 @@ type Conn struct {
 	// directory where the client downloads to
 	basePath string
 
-	streams      map[messages.StreamID]*stream
-	streamsMu    sync.RWMutex
-	streamsWg    *sync.WaitGroup
-	streamsClose chan struct{}
-
-	// synchronization between routines
-	wg    *sync.WaitGroup
-	close chan struct{}
+	streams   map[messages.StreamID]*stream
+	streamsMu sync.RWMutex
+	wg        *sync.WaitGroup
+	close     chan struct{}
 
 	// buffers for sending data
 	outCtrl chan []byte
 	outData chan []byte
 
+	// TODO: make sure the options are used
 	options ConnOptions
 }
 
@@ -70,7 +69,7 @@ type Conn struct {
 // stream should be closed. It also tries to remove the stream from conn.streams.
 // HOWEVER, it does not remove any streams from conn.reqStreams
 func (c *Conn) CloseStream(
-	sid *messages.StreamID,
+	sid *messages.StreamID, // TODO: make non pointer!
 	r messages.CloseReason,
 ) { // no need to return an error since we want to close it either way
 	// TODO: Send the close message
@@ -84,9 +83,6 @@ func (c *Conn) CloseStream(
 			)
 		} else {
 			delete(c.streams, *sid)
-			c.l.Warn("deleted stream not found in streams",
-				zap.Uint16("stream_id", uint16(*sid)),
-			)
 		}
 		c.streamsMu.Unlock()
 	}
@@ -110,9 +106,12 @@ func (c *Conn) sendMessages(
 	outCtrl chan []byte,
 	outData chan []byte,
 ) {
+	c.wg.Add(1)
+	defer c.wg.Done()
 
-loop:
 	for {
+	loop:
+		time.Sleep(time.Nanosecond * 100) // TODO: Adjust
 		select {
 		case msg := <-outCtrl:
 			_, err := c.conn.Write(msg)
@@ -123,6 +122,9 @@ loop:
 				return
 			}
 			goto loop
+		case <-c.close:
+			c.l.Info("stop sending messages")
+			return
 		default:
 		}
 
@@ -135,6 +137,9 @@ loop:
 				close(c.close)
 				return
 			}
+		case <-c.close:
+			c.l.Info("stop sending messages")
+			return
 		default:
 		}
 	}

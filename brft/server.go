@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"sync"
 
 	"github.com/davecgh/go-spew/spew"
 	"gitlab.lrz.de/bbrft/brft/common"
@@ -100,7 +101,13 @@ func (s *Server) ListenAndServe() error {
 			basePath: s.basePath,
 			isClient: false,
 			streams:  make(map[messages.StreamID]*stream, 100),
-			options:  s.options.ConnOptions,
+
+			wg:      new(sync.WaitGroup),
+			close:   make(chan struct{}),
+			outCtrl: make(chan []byte, 100),
+			outData: make(chan []byte, 100),
+
+			options: s.options.ConnOptions,
 		}
 
 		// handle the connection
@@ -124,6 +131,9 @@ func (c *Conn) handleServerConnection() {
 			c.l.Error("error while closing connection", zap.Error(errClose))
 		}
 	}
+
+	// start routine for coordinating the sending messages
+	go c.sendMessages(c.outCtrl, c.outData)
 
 	// wait for incomming messages
 	for {
@@ -150,9 +160,34 @@ func (c *Conn) handleServerConnection() {
 				return
 			}
 
-			// handle the file transfer negotiation
+			// create a new stream
+			s := &stream{
+				l: c.l.With(
+					zap.Uint16("stream_id", uint16(req.StreamID)),
+					zap.String("remote_addr", c.conn.LocalAddr().String()),
+					zap.String("local_addr", c.conn.RemoteAddr().String()),
+					zap.Bool("client_conn", false),
+				),
+				in: make(chan messages.BRFTMessage, 50),
+			}
 
-			err = c.newServerSession(req)
+			// make sure the streamID is not already taken
+			if c.isDuplicateStreamID(req.StreamID) {
+				c.l.Error("streamID already exists - closing stream")
+				// TODO: We cannot remove the existing stream - we have to only send the close message!
+				// close the stream, but keep the connection open
+				c.CloseStream(nil, messages.CloseReasonStreamIDTaken)
+				break
+			}
+
+			c.streamsMu.RLock()
+			c.streams[req.StreamID] = s
+			c.streamsMu.RUnlock()
+
+			s.in <- req
+
+			// handle the file transfer negotiation
+			c.handleServerStream(s)
 			if err != nil {
 				closeConn("FileRequest", err)
 				return
@@ -168,12 +203,13 @@ func (c *Conn) handleServerConnection() {
 				return
 			}
 
-			// handle the file transfer negotiation
-			err = c.handleServerTransmissionStart(st)
-			if err != nil {
-				closeConn("StartTransmission", err)
-				return
+			c.streamsMu.RLock()
+			if s, ok := c.streams[st.StreamID]; !ok {
+				c.CloseStream(&st.StreamID, messages.CloseReasonUndefined)
+			} else {
+				s.in <- st
 			}
+			c.streamsMu.RUnlock()
 
 			// TODO: Remove
 			return
@@ -212,30 +248,32 @@ func (c *Conn) handleServerConnection() {
 // The function might close the stream and remove any information about it
 // remaining on the Conn if a non-critical error occurs. As such, only critical
 // errors that should lead to closing the whole btp.Conn are returned.
-func (c *Conn) newServerSession(req *messages.FileReq) error {
+func (c *Conn) handleServerStream(s *stream) {
 
-	// make sure the streamID is not already taken
-	if c.isDuplicateStreamID(req.StreamID) {
-		c.l.Error("streamID already exists - closing stream")
-		// close the stream, but keep the connection open
-		// NOTE: The stream object has not yet been added to c.streams
-		// (i.e. no cleanup needed)
-		c.CloseStream(nil, messages.CloseReasonStreamIDTaken)
-		return nil
+	c.wg.Add(1)
+	defer c.wg.Done()
+
+	// wait for the FileReq packet
+	var msg messages.BRFTMessage
+	select {
+	case msg = <-s.in:
+	case <-c.close:
+		s.l.Info("stopping stream")
+		return
 	}
 
-	// create a new stream
-	l := c.l.With(
-		zap.Uint16("stream_id", uint16(req.StreamID)),
-		zap.String("remote_addr", c.conn.LocalAddr().String()),
-		zap.String("local_addr", c.conn.RemoteAddr().String()),
-		zap.Bool("client_conn", true),
-	)
-	s := stream{
-		l:                 l,
-		id:                req.StreamID,
-		fileName:          req.FileName,
-		requestedChecksum: req.Checksum,
+	// make sure its a FileResponse
+	var req *messages.FileReq
+	switch v := msg.(type) {
+	case *messages.FileReq:
+		req = v
+	default:
+		s.l.Error("unexpected message type",
+			zap.String("expected_message_type", "FileRequest"),
+			zap.String("actual_message", spew.Sdump("\n", v)),
+		)
+		c.CloseStream(&s.id, messages.CloseReasonUndefined)
+		return
 	}
 
 	// create a FileResponse
@@ -249,20 +287,18 @@ func (c *Conn) newServerSession(req *messages.FileReq) error {
 	var err error
 	s.f, err = OpenFile(req.FileName, c.basePath)
 	if errors.Is(err, os.ErrNotExist) {
-		l.Error("file does not exists - closing stream")
+		s.l.Error("file does not exists - closing stream")
 		// close the stream, but keep the connection open
-		// NOTE: The stream object has not yet been added to c.streams
-		// (i.e. no cleanup needed)
-		c.CloseStream(nil, messages.CloseReasonFileNotFound)
-		return nil
+		c.CloseStream(&s.id, messages.CloseReasonFileNotFound)
+		return
 	} else if err != nil {
-		l.Error("unable to open file - closing stream", zap.Error(err))
+		s.l.Error("unable to open file - closing stream", zap.Error(err))
 		// close the stream, but keep the connection open
-		// NOTE: The stream object has not yet been added to c.streams
-		// (i.e. no cleanup needed)
-		c.CloseStream(nil, messages.CloseReasonUndefined)
-		return nil
+		c.CloseStream(&s.id, messages.CloseReasonUndefined)
+		return
 	}
+	s.fileName = req.FileName
+	s.requestedChecksum = req.Checksum
 	resp.FileSize = s.f.Size()
 	resp.Checksum = s.f.Checksum()
 
@@ -271,10 +307,8 @@ func (c *Conn) newServerSession(req *messages.FileReq) error {
 		// we need a checksum for resumption
 		if bytes.Equal(req.Checksum, make([]byte, common.ChecksumSize)) {
 			// close the stream, but keep the connection open
-			// NOTE: The stream object has not yet been added to c.streams
-			// (i.e. no cleanup needed)
-			c.CloseStream(nil, messages.CloseReasonResumeNoChecksum)
-			return nil
+			c.CloseStream(&s.id, messages.CloseReasonResumeNoChecksum)
+			return
 		}
 
 		s.isResumption = true
@@ -290,10 +324,8 @@ func (c *Conn) newServerSession(req *messages.FileReq) error {
 			zap.String("received_checksum", spew.Sdump("\n", req.Checksum)),
 		)
 		// close the stream, but keep the connection open
-		// NOTE: The stream object has not yet been added to c.streams
-		// (i.e. no cleanup needed)
-		c.CloseStream(nil, messages.CloseReasonChecksumInvalid)
-		return nil
+		c.CloseStream(&s.id, messages.CloseReasonChecksumInvalid)
+		return
 	}
 
 	// handle the optional headers
@@ -356,10 +388,8 @@ func (c *Conn) newServerSession(req *messages.FileReq) error {
 			)
 			// actually close the stream since something went wrong on our
 			// side, but keep the connection open
-			// NOTE: The stream object has not yet been added to c.streams
-			// (i.e. no cleanup needed)
-			c.CloseStream(nil, messages.CloseReasonUndefined)
-			return nil
+			c.CloseStream(&s.id, messages.CloseReasonUndefined)
+			return
 		}
 
 		if respOpt != nil {
@@ -370,7 +400,7 @@ func (c *Conn) newServerSession(req *messages.FileReq) error {
 	resp.OptHeaders = optHeaders
 
 	// send the response
-	data, err := resp.Encode(l)
+	data, err := resp.Encode(s.l)
 	if err != nil {
 		c.l.Error("unable to encode FileResponse",
 			zap.String("packet", spew.Sdump("\n", resp)),
@@ -379,8 +409,8 @@ func (c *Conn) newServerSession(req *messages.FileReq) error {
 		// close the stream, but keep the connection open
 		// NOTE: The stream object has not yet been added to c.streams
 		// (i.e. no cleanup needed)
-		c.CloseStream(nil, messages.CloseReasonUndefined)
-		return nil
+		c.CloseStream(&s.id, messages.CloseReasonUndefined)
+		return
 	}
 
 	s.l.Debug("sending FileResponse",
@@ -389,32 +419,36 @@ func (c *Conn) newServerSession(req *messages.FileReq) error {
 		zap.String("packet_encoded", spew.Sdump("\n", data)),
 	)
 
-	_, err = c.conn.Write(data)
-	if err != nil {
-		// actually close the whole connection TODO: is that correct?
-		return fmt.Errorf("unable to write FileResponse: %w", err)
+	// TODO: maybe introduce a high timeout (~ 10s)
+	// send the data to the sender routing
+	select {
+	case c.outCtrl <- data:
+	case <-c.close:
+		s.l.Info("stopping stream")
+		return
 	}
 
-	// add the stream to the connection
-	c.streamsMu.Lock()
-	c.streams[s.id] = &s
-	c.streamsMu.Unlock()
-
-	return nil
-}
-
-func (c *Conn) handleServerTransmissionStart(st *messages.StartTransmission) error {
-
-	// FIXME: it's not really nice to always block the whole stream
-	//			- how much locking is actually needed?!
-	c.streamsMu.RLock()
-	s, ok := c.streams[st.StreamID]
-	if !ok {
-		c.CloseStream(&st.StreamID, messages.CloseReasonUndefined)
-		return nil
+	// wait for the subsequent StartTransmission packet
+	select {
+	case msg = <-s.in:
+	case <-c.close:
+		s.l.Info("stopping stream")
+		return
 	}
-	c.streamsMu.RUnlock()
-	// remove the stream from the requested ones
+
+	// make sure its a FileResponse
+	var st *messages.StartTransmission
+	switch v := msg.(type) {
+	case *messages.StartTransmission:
+		st = v
+	default:
+		s.l.Error("unexpected message type",
+			zap.String("expected_message_type", "StartTransmission"),
+			zap.String("actual_message", spew.Sdump("\n", v)),
+		)
+		c.CloseStream(&s.id, messages.CloseReasonUndefined)
+		return
+	}
 
 	// once again check the checksum
 	if !bytes.Equal(st.Checksum, s.f.Checksum()) {
@@ -422,8 +456,8 @@ func (c *Conn) handleServerTransmissionStart(st *messages.StartTransmission) err
 			zap.String("actual_checksum", spew.Sdump("\n", s.f.Checksum())),
 			zap.String("received_checksum", spew.Sdump("\n", st.Checksum)),
 		)
-		c.CloseStream(&st.StreamID, messages.CloseReasonChecksumInvalid)
-		return nil
+		c.CloseStream(&s.id, messages.CloseReasonChecksumInvalid)
+		return
 	}
 
 	// make sure the offset (if set) is not too big for the file
@@ -432,28 +466,20 @@ func (c *Conn) handleServerTransmissionStart(st *messages.StartTransmission) err
 			zap.Uint64("offset", st.Offset),
 			zap.Uint64("file_size", s.f.Size()),
 		)
-		c.CloseStream(&st.StreamID, messages.CloseReasonInvalidOffset)
-		return nil
+		c.CloseStream(&s.id, messages.CloseReasonInvalidOffset)
+		return
 	}
 
-	// TODO: actually start transmission
 	s.l.Debug("start sending data packets",
 		zap.String("start_transmission", spew.Sdump("\n", st)),
 		//TODO:  zap.String("packet", spew.Sdump("\n",resp)),
 		// TODO: zap.String("packet_encoded", spew.Sdump("\n",data)),
 	)
 
-	// update the stream
-	s.handshakeDone = true // TODO: Probably have to protect against concurrency somehow
+	// start sending data from the file
+	for {
 
-	c.streamsMu.Lock()
-	c.streams[s.id] = s
-	c.streamsMu.Unlock()
-
-	// start sending from the stream
-	go c.sendData(s)
-
-	return nil
+	}
 }
 
 // TODO: somehow we should block other routines from sending as well or even modify the stream
@@ -506,7 +532,7 @@ func (c *Conn) newStreamID() messages.StreamID {
 
 // newStreamID generates a new unique streamID for the connection
 func (c *Conn) isDuplicateStreamID(newId messages.StreamID) bool {
-	if !c.isClient {
+	if c.isClient {
 		c.l.Warn("only servers should have to check StreamIDs")
 	}
 

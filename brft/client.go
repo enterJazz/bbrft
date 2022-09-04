@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"sync"
 
 	"github.com/davecgh/go-spew/spew"
 	"gitlab.lrz.de/bbrft/brft/common"
@@ -31,8 +32,11 @@ func Dial(
 		basePath: downloadDir, // TODO: Make sure that it actually exists / create it
 		isClient: true,
 		streams:  make(map[messages.StreamID]*stream, 100),
-		outCtrl:  make(chan []byte, 100),
-		outData:  make(chan []byte, 100),
+
+		wg:      new(sync.WaitGroup),
+		close:   make(chan struct{}),
+		outCtrl: make(chan []byte, 100),
+		outData: make(chan []byte, 100),
 	}
 
 	if options == nil {
@@ -199,7 +203,7 @@ func (c *Conn) handleClientConnection() {
 
 			c.streamsMu.RLock()
 			if s, ok := c.streams[resp.StreamID]; !ok {
-				c.CloseStream(nil, messages.CloseReasonUndefined)
+				c.CloseStream(&resp.StreamID, messages.CloseReasonUndefined)
 			} else {
 				s.in <- resp
 			}
@@ -277,7 +281,7 @@ func (c *Conn) handleStream(s *stream) {
 		resp = v
 	default:
 		s.l.Error("unexpected message type",
-			zap.String("expected_message_type", "FileResp"),
+			zap.String("expected_message_type", "FileResponse"),
 			zap.String("actual_message", spew.Sdump("\n", v)),
 		)
 		c.CloseStream(&s.id, messages.CloseReasonUndefined)
@@ -391,7 +395,12 @@ func (c *Conn) handleStream(s *stream) {
 
 	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
-	c.outCtrl <- data
+	select {
+	case c.outCtrl <- data:
+	case <-c.close:
+		s.l.Info("stopping stream")
+		return
+	}
 
 	// TODO: Start waiting for Data packets
 
