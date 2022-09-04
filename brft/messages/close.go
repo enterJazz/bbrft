@@ -30,6 +30,10 @@ type Close struct {
 	Reason   CloseReason
 }
 
+func (m *Close) String() string {
+	return fmt.Sprintf("Close Reason=%d, StreamID=%d", m.Reason, m.StreamID)
+}
+
 func (m *Close) baseSize() int {
 	return 2 + 1
 }

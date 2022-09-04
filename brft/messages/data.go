@@ -8,7 +8,7 @@ import (
 )
 
 type Data struct {
-	StreamID uint16
+	StreamID StreamID
 	// Data is the actual payload, on the wire this field is length delimeted
 	Data []byte
 }
@@ -16,6 +16,10 @@ type Data struct {
 func (m *Data) baseSize() int {
 	// streamID + length of payload
 	return 2 + 3 + len(m.Data)
+}
+
+func (m *Data) String() string {
+	return fmt.Sprintf("Data len=%d", len(m.Data))
 }
 
 func (m *Data) Encode(l *zap.Logger) ([]byte, error) {

@@ -288,6 +288,9 @@ func (c *Conn) send(msg messages.Codable) (n int, err error) {
 	return int(msg.Size()), nil
 }
 
+// transmit sends the next message over the underlying UDP connection
+// if packet type is ackEliciting a new sequence number will be queed
+// and a monitoring packet
 func (c *Conn) transmit(msg messages.Codable) (n int, err error) {
 	requiresAck := isAckElicitingPacket(msg)
 	l := c.logger
@@ -566,18 +569,17 @@ func (c *Conn) onMessage(msg messages.Codable) error {
 func (c *Conn) run() error {
 	defer c.ctxCancel()
 
+	var closeErr error
 	l := c.logger
-	var (
-		closeErr error
-	)
 
 	go func() {
+	recvLoop:
 		for {
 			select {
 			case <-c.ctx.Done():
-				l.Debug("stopping run loop")
+				l.Debug("stopping receive loop")
 				c.isRunLoopRunning = false
-				return
+				break recvLoop
 			default:
 				msg, err := c.recv()
 				if err != nil {
@@ -591,6 +593,8 @@ func (c *Conn) run() error {
 				}
 			}
 		}
+
+		l.Debug("receive loop stopped")
 	}()
 
 runLoop:
@@ -624,6 +628,8 @@ runLoop:
 			return err
 		}
 	}
+
+	l.Debug("run loop stopped")
 
 	return closeErr
 }

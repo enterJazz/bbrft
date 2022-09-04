@@ -3,7 +3,6 @@ package brft
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"math/rand"
 	"net"
 	"os"
@@ -14,7 +13,6 @@ import (
 	"gitlab.lrz.de/bbrft/brft/compression"
 	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/btp"
-	"gitlab.lrz.de/bbrft/cyberbyte"
 	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
@@ -137,7 +135,7 @@ func (c *Conn) handleServerConnection() {
 
 	// wait for incomming messages
 	for {
-		h, err := c.readHeader()
+		inMsg, h, err := c.readMsg()
 		if err != nil {
 			// errors already handled by function
 			// TODO: maybe only return if we cannot read, not if the header is
@@ -149,21 +147,12 @@ func (c *Conn) handleServerConnection() {
 
 		// handle the message here to make sure that the whole read happens in
 		// on go (multiple concurrent reads could lead to nasty mixups)
-		switch h.MessageType {
-		case messages.MessageTypeFileReq:
-			// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
-			// decode the packet
-			req := new(messages.FileReq)
-			err := req.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
-			if err != nil {
-				closeConn("FileRequest", fmt.Errorf("unable to decode FileRequest: %w", err))
-				return
-			}
-
+		switch msg := inMsg.(type) {
+		case *messages.FileReq:
 			// create a new stream
 			s := &stream{
 				l: c.l.With(
-					zap.Uint16("stream_id", uint16(req.StreamID)),
+					zap.Uint16("stream_id", uint16(msg.StreamID)),
 					zap.String("remote_addr", c.conn.LocalAddr().String()),
 					zap.String("local_addr", c.conn.RemoteAddr().String()),
 					zap.Bool("client_conn", false),
@@ -172,7 +161,7 @@ func (c *Conn) handleServerConnection() {
 			}
 
 			// make sure the streamID is not already taken
-			if c.isDuplicateStreamID(req.StreamID) {
+			if c.isDuplicateStreamID(msg.StreamID) {
 				c.l.Error("streamID already exists - closing stream")
 				// TODO: We cannot remove the existing stream - we have to only send the close message!
 				// close the stream, but keep the connection open
@@ -181,10 +170,10 @@ func (c *Conn) handleServerConnection() {
 			}
 
 			c.streamsMu.RLock()
-			c.streams[req.StreamID] = s
+			c.streams[msg.StreamID] = s
 			c.streamsMu.RUnlock()
 
-			s.in <- req
+			s.in <- msg
 
 			// handle the file transfer negotiation
 			c.handleServerStream(s)
@@ -193,35 +182,26 @@ func (c *Conn) handleServerConnection() {
 				return
 			}
 
-		case messages.MessageTypeStartTransmission:
-			// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
-			// decode the packet
-			st := new(messages.StartTransmission)
-			err := st.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
-			if err != nil {
-				closeConn("StartTransmission", fmt.Errorf("unable to decode StartTransmission: %w", err))
-				return
-			}
-
-			c.streamsMu.RLock()
-			if s, ok := c.streams[st.StreamID]; !ok {
-				c.CloseStream(&st.StreamID, messages.CloseReasonUndefined)
+		case *messages.StartTransmission:
+			s := c.getStream(msg.StreamID)
+			if s == nil {
+				// TODO: We cannot remove the existing stream - we have to only send the close message!
+				c.CloseStream(&msg.StreamID, messages.CloseReasonUndefined)
 			} else {
-				s.in <- st
+				s.in <- msg
 			}
-			c.streamsMu.RUnlock()
 
 			// TODO: Remove
 			return
-		case messages.MessageTypeClose:
+		case *messages.Close:
 			// TODO: Close the stream, but not the connection
 
-		case messages.MessageTypeMetaDataReq:
+		case *messages.MetaReq:
 			// TODO: handle the request (concurrently?)
 
-		case messages.MessageTypeFileResp,
-			messages.MessageTypeData,
-			messages.MessageTypeMetaDataResp:
+		case *messages.FileResp,
+			*messages.Data,
+			*messages.MetaResp:
 			c.l.Error("unexpected message type",
 				zap.Uint8("type_encoding", uint8(h.MessageType)),
 				zap.String("type", h.MessageType.String()),

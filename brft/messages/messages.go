@@ -17,6 +17,9 @@ type BRFTMessage interface {
 
 	// base size of the message without header but with all non variable length or optional fields
 	baseSize() int
+
+	// get string representation of packet
+	String() string
 }
 
 type StreamID uint16

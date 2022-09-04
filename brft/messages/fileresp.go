@@ -49,6 +49,10 @@ func (m *FileResp) baseSize() int {
 	return 1 + 2 + 8 + common.ChecksumSize
 }
 
+func (m *FileResp) String() string {
+	return "FileResp"
+}
+
 func (m *FileResp) Encode(l *zap.Logger) ([]byte, error) {
 	if len(m.Checksum) != common.ChecksumSize {
 		return nil, errors.New("invalid checksum length")

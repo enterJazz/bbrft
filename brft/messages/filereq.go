@@ -48,6 +48,10 @@ type FileReq struct {
 	Checksum []byte
 }
 
+func (m *FileReq) String() string {
+	return "FileReq"
+}
+
 func (m *FileReq) baseSize() int {
 	// streamID + flags + file name length
 	return 2 + 1 + 1 + len([]byte(m.FileName)) + common.ChecksumSize

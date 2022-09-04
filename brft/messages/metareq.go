@@ -26,6 +26,10 @@ func (m *MetaReq) baseSize() int {
 	return len([]byte(m.FileName))
 }
 
+func (m *MetaReq) String() string {
+	return "MetaItemReq"
+}
+
 func (m *MetaReq) Encode(l *zap.Logger) ([]byte, error) {
 	fileName := []byte(m.FileName)
 	if len(fileName) > 255 {
