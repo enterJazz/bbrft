@@ -8,30 +8,48 @@ import (
 	"go.uber.org/zap"
 )
 
+// for indicating true in byte form for isExtended
+const trueByte uint8 = 0x1
+
+// for indicating false in byte form for isExtended
+const falseByte uint8 = 0x0
+
+// base length of MetaDataResp
+const metaRespBaseLen int = 2
+
 type MetaResp struct {
 	// Items are the items for all the requested files
-	Items []MetaItem
-
+	Items []*MetaItem
+	// Indicates wether this response contains an extended meta data item, i.e., an item with a checksum and file size set
 	isExtended bool
 }
 
 // NewMetaResp creates a new MetaResp. The number of items will be deeduced from the items. NOTE that the maximum number
 // of items in one resp is limited to 255 and that there might also be responses with 0 items
-func NewMetaResp(items []MetaItem) (*MetaResp, error) {
+func NewMetaResp(items []*MetaItem) (*MetaResp, error) {
 	// TODO: we could also do the splitting of MetaResponses in here and return []*MetaResp
 	numItems := len(items)
 	if numItems > 255 {
-		return nil, errors.New("to many items")
+		return nil, errors.New("too many items")
+	}
+
+	// determine if resp is extended
+	// a req ist extended if and only if it contains exactly 1 item and that item's checksum and file size are not null
+	var isExtended bool
+	if numItems == 1 && (items[0].FileSize != nil && items[0].Checksum != nil) {
+		isExtended = true
+	} else {
+		isExtended = false
 	}
 
 	return &MetaResp{
-		Items: items,
+		Items:      items,
+		isExtended: isExtended,
 	}, nil
 }
 
 func (m *MetaResp) baseSize() int {
-	// FIXME: wlad how large is this
-	return 0
+	return metaRespBaseLen
 }
 
 func (m *MetaResp) Name() string {
@@ -55,11 +73,15 @@ func (m *MetaResp) Encode(l *zap.Logger) ([]byte, error) {
 		bytes = append(bytes, b...)
 	}
 
-	b := NewFixedBRFTMessageBuilderWithExtra(m, len(bytes)-m.baseSize())
+	b := NewFixedBRFTMessageBuilderWithExtra(m, len(bytes))
 
 	b.AddUint8(uint8(numItems))
+	if m.isExtended {
+		b.AddUint8(trueByte)
+	} else {
+		b.AddUint8(falseByte)
+	}
 	b.AddBytes(bytes)
-
 	return b.Bytes()
 }
 
@@ -70,23 +92,34 @@ func (m *MetaResp) Decode(l *zap.Logger, s *cyberbyte.String) error {
 		return ErrReadFailed
 	}
 
-	// NOTE: This is designed badly, since we cannot infer here how long an item
-	// will be
-	items := make([]MetaItem, 0, numItems)
+	var isExtendedByte uint8
+	if err := s.ReadUint8(&isExtendedByte); err != nil {
+		return ErrReadFailed
+	}
+	if isExtendedByte == trueByte {
+		m.isExtended = true
+	} else if isExtendedByte == falseByte {
+		m.isExtended = false
+	} else {
+		return ErrInvalidValue
+	}
+
+	items := make([]*MetaItem, 0, numItems)
 	for i := 0; i < int(numItems); i++ {
 		item := &MetaItem{}
 		err := item.UnmarshalWithString(s, m.isExtended)
 		if err != nil {
-			return fmt.Errorf("unabel to unmarshal item: %s", err)
+			return fmt.Errorf("unable to unmarshal item: %s", err)
 		}
 
-		items = append(items, *item)
+		items = append(items, item)
 	}
 
 	m.Items = items
 	return nil
 }
 
+// TODO remove
 func (m *MetaResp) SetExtended(val bool) {
 	m.isExtended = val
 }

@@ -118,7 +118,7 @@ func TestMetaRespMarshalUnmarshal(t *testing.T) {
 		{"valid",
 			MetaResp{
 				isExtended: false,
-				Items: []MetaItem{
+				Items: []*MetaItem{
 					{FileName: "filename-1"},
 					{FileName: "filename-2"},
 					{FileName: "filename-3"},
@@ -130,7 +130,7 @@ func TestMetaRespMarshalUnmarshal(t *testing.T) {
 		{"valid-extended",
 			MetaResp{
 				isExtended: true,
-				Items: []MetaItem{
+				Items: []*MetaItem{
 					{
 						FileName: "filename-1",
 						FileSize: &size,

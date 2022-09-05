@@ -28,3 +28,5 @@
 - we haven't specified message types for the metadata packets -> added some to the specification
 - it would have been nicer for implementation to add a packet size to the brft header
 - it would have been nice to have a chunk size as part of the normal negotiation instead of giving the server free reign
+- we had no way to indicate if a MetaDataResp would be extended or not without holding more client state, making things messy
+    -> we added a byte to the MetaResp to indicate whether the response is extended or not

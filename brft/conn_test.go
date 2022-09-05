@@ -7,8 +7,7 @@ import (
 	"gitlab.lrz.de/bbrft/log"
 )
 
-func TestTransfer(t *testing.T) {
-
+func setupTest(t *testing.T) *Conn {
 	ld, _ := log.NewLogger()
 	lp, err := log.NewLogger(log.WithProd(false))
 	opt := &ServerOptions{NewDefaultOptions(lp)}
@@ -27,16 +26,38 @@ func TestTransfer(t *testing.T) {
 
 	t.Log(laddr.String())
 	optD := NewDefaultOptions(lp)
-	c, err := Dial(ld, laddr.String(), "../test/downloads", &optD)
+	c, err := Dial(ld, laddr.String(), "../test/server", &optD)
 	if err != nil {
 		t.Error(err)
 	}
-	err = c.DownloadFile("test.jpg")
+	return c
+}
+
+func TestTransfer(t *testing.T) {
+
+	c := setupTest(t)
+	err := c.DownloadFile("test.jpg")
 	if err != nil {
 		t.Error(err)
 	}
 
 	for {
-		time.Sleep(100)
+		time.Sleep(time.Nanosecond * 100)
+	}
+}
+
+func TestMetaData(t *testing.T) {
+	c := setupTest(t)
+
+	if err := c.ListFileMetaData(""); err != nil {
+		t.Error(err)
+	}
+
+	if err := c.ListFileMetaData("test.jpg"); err != nil {
+		t.Error(err)
+	}
+
+	for {
+		time.Sleep(time.Nanosecond * 100)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 
 	"github.com/davecgh/go-spew/spew"
@@ -58,6 +59,67 @@ func Dial(
 	go c.handleClientConnection()
 
 	return c, nil
+}
+
+// should be performed single threaded as waits for metaDataResp on connection in lock-step fashion
+func (c *Conn) ListFileMetaData(
+	fileName string,
+) error {
+	if !c.isClient {
+		return ErrExpectedClientConnection
+	}
+
+	c.l.Info("fetching metadata", zap.String("filename", fileName))
+
+	// create the request
+	metaReq, err := messages.NewMetaReq(fileName)
+	if err != nil {
+		return fmt.Errorf("failed to create MetaDataReq: %w", err)
+	}
+
+	data, err := metaReq.Encode(c.l)
+	if err != nil {
+		return fmt.Errorf("unable to encode MetaDataReq: %w", err)
+	}
+
+	// write the encoded message
+	// FIXME: fix len(data) != n
+	_, err = c.conn.Write(data)
+	if err != nil {
+		return fmt.Errorf("unable to write MetaDataReq: %w", err)
+	}
+	//if n != len(data) {
+	//	return io.ErrShortWrite
+	//}
+
+	// wait for a resp
+	inMsg, _, err := c.readMsg()
+	if err != nil {
+		return fmt.Errorf("unable to read incoming message: %w", err)
+	}
+
+	switch msg := inMsg.(type) {
+	case *messages.MetaResp:
+		// print output of MetaDataResp
+		output := "MetaDataReq output:\n"
+		for i, item := range msg.Items {
+			output += "MetaDataItem " + strconv.Itoa(i) + ":\n\tFILE NAME: " + item.FileName + "\n"
+			if item.FileSize != nil {
+				output += "\tFILE SIZE: " + strconv.Itoa(int(*item.FileSize)) + "\n"
+			}
+			if item.Checksum != nil {
+				output += "\tCHECKSUM: " + fmt.Sprintf("%x", item.Checksum) + "\n"
+			}
+		}
+		if _, err := fmt.Println(output); err != nil {
+			return fmt.Errorf("unable to write MetaDataResp output to stdout: %w", err)
+		}
+		c.l.Info("got metadata", zap.String("metadata", output))
+	default:
+		return fmt.Errorf("got unexpected message type: %v", msg)
+	}
+
+	return nil
 }
 
 func (c *Conn) DownloadFile(

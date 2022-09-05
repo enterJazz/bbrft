@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"net"
 	"os"
@@ -17,6 +18,8 @@ import (
 	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
+
+const EMPTY_FILE_NAME string = ""
 
 type ServerOptions struct {
 	ConnOptions
@@ -212,6 +215,7 @@ func (c *Conn) handleServerConnection() {
 			}
 
 		case *messages.MetaReq:
+			c.handleMetaDataReq(*msg)
 			// TODO: handle the request (concurrently?)
 
 		case *messages.FileResp,
@@ -603,6 +607,112 @@ func (c *Conn) isDuplicateStreamID(newId messages.StreamID) bool {
 		}
 	}
 	return false
+}
+
+func (c *Conn) handleMetaDataReq(metaReq messages.MetaReq) {
+	var (
+		metaResps []*messages.MetaResp
+		metaItems []*messages.MetaItem
+	)
+	reqFileName := metaReq.FileName
+
+	defer func() {
+		// send collected metaResps
+		for _, metaResp := range metaResps {
+			data, err := metaResp.Encode(c.l)
+			if err != nil {
+				c.l.Error("failed to encode metaDataResp - skipping", zap.Error(err))
+				continue
+			}
+			c.outData <- data
+		}
+	}()
+
+	addEmptyMetaResp := func() {
+		emptyMetaResp, err := messages.NewMetaResp(nil)
+		if err != nil {
+			c.l.Error("failed to create empty meta resp - sending nothing", zap.Error(err))
+		} else {
+			metaResps = append(metaResps, emptyMetaResp)
+		}
+	}
+
+	// empty file name: list all available files in dir
+	if reqFileName == EMPTY_FILE_NAME {
+		dirContents, err := ioutil.ReadDir(c.basePath)
+		if err != nil {
+			c.l.Error("unable to open dir - sending empty response", zap.Error(err))
+			addEmptyMetaResp()
+			return
+		}
+		for _, fInfo := range dirContents {
+			if !fInfo.IsDir() {
+				metaItem, err := messages.NewMetaItem(fInfo.Name(), nil, nil)
+				if err != nil {
+					c.l.Error("unable to create metaDataItem - skipping this item", zap.Error(err))
+					continue
+				}
+				metaItems = append(metaItems, metaItem)
+			}
+		}
+	} else {
+		// specific filename specified; get extended metadata
+		f, err := OpenFile(reqFileName, c.basePath)
+
+		if errors.Is(err, os.ErrNotExist) {
+			c.l.Error("file does not exist - sending empty response", zap.String("file not found", reqFileName))
+			addEmptyMetaResp()
+			return
+		} else if err != nil {
+			c.l.Error("unable to open file - sending empty response", zap.Error(err))
+			addEmptyMetaResp()
+			return
+		}
+
+		name := f.f.Name()
+		size := uint64(f.stat.Size())
+		checksum := f.Checksum()
+		metaItem, err := messages.NewMetaItem(
+			name,
+			&size,
+			checksum,
+		)
+		if err != nil {
+			c.l.Error("unable to create metaDataItem - returning empty response", zap.Error(err))
+			addEmptyMetaResp()
+			return
+		}
+		metaItems = append(metaItems, metaItem)
+	}
+
+	// split metaItems into metaResps
+	splitMetaItemsIntoMetaResp := func() {
+		var nExtractItems int
+		var metaItemsResp []*messages.MetaItem
+		if len(metaItems) < messages.MaxMetaItemsNum {
+			nExtractItems = len(metaItems)
+		} else {
+			nExtractItems = messages.MaxMetaItemsNum
+		}
+		metaItemsResp, metaItems = metaItems[:nExtractItems], metaItems[nExtractItems:]
+		metaResp, err := messages.NewMetaResp(metaItemsResp)
+		if err != nil {
+			c.l.Error("unable to create metaDataResp - returning empty response", zap.Error(err))
+			panic("todo")
+		}
+		metaResps = append(metaResps, metaResp)
+	}
+
+	splitMetaItemsIntoMetaResp()
+	for len(metaItems) > messages.MaxMetaItemsNum {
+		splitMetaItemsIntoMetaResp()
+	}
+	// sanity check
+	if len(metaItems) != 0 {
+		c.l.Fatal("failed to load all metaDataItems into resps!")
+	}
+
+	// send generated metaResps upon return (see defer)
 }
 
 // TODO: Probably not needed
