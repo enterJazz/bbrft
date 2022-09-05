@@ -3,6 +3,7 @@ package brft
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"math/rand"
 	"net"
 	"os"
@@ -135,17 +136,10 @@ func (c *Conn) handleServerConnection() {
 
 	// wait for incomming messages
 	for {
+		// FIXME: this is blocking frever - we need to either read or listen on c.close channel
 		inMsg, h, err := c.readMsg()
 		if err != nil {
-			// errors already handled by function
-			// TODO: maybe only return if we cannot read, not if the header is
-			// unknown - however the question is how we know how long the
-			// message is in order to advance over it
-			if inMsg != nil {
-				closeConn(inMsg.Name(), err)
-			} else {
-				closeConn("could not read message_type", err)
-			}
+			closeConn("could not read message_type", err)
 			return
 		}
 
@@ -155,12 +149,7 @@ func (c *Conn) handleServerConnection() {
 		case *messages.FileReq:
 			// create a new stream
 			s := &stream{
-				l: c.l.With(
-					zap.Uint16("stream_id", uint16(msg.StreamID)),
-					zap.String("remote_addr", c.conn.LocalAddr().String()),
-					zap.String("local_addr", c.conn.RemoteAddr().String()),
-					zap.Bool("client_conn", false),
-				),
+				l:         c.l.With(zap.Uint16("stream_id", uint16(msg.StreamID))),
 				id:        msg.StreamID,
 				chunkSize: messages.ComputeChunkSize(c.options.chunkSizeFactor),
 				in:        make(chan messages.BRFTMessage, 50),
@@ -168,10 +157,16 @@ func (c *Conn) handleServerConnection() {
 
 			// make sure the streamID is not already taken
 			if c.isDuplicateStreamID(s.id) {
-				c.l.Error("streamID already exists - closing stream")
-				// TODO: We cannot remove the existing stream - we have to only send the close message!
-				// close the stream, but keep the connection open
-				c.CloseStream(nil, messages.CloseReasonStreamIDTaken)
+				c.l.Error("received FileReq packet for already existing stream",
+					zap.String("stream_id", msg.StreamID.String()),
+				)
+
+				// TODO: Maybe we should remove the stream afterall. The peer
+				// 		will close the stream and our packets would just trigger
+				//		another Close packet
+				// cannot remove the stream since it does not exist - only can
+				// send a close message
+				c.sendClosePacket(msg.StreamID, messages.CloseReasonUndefined)
 				break
 			}
 
@@ -190,17 +185,31 @@ func (c *Conn) handleServerConnection() {
 
 		case *messages.StartTransmission:
 			s := c.getStream(msg.StreamID)
-			if s == nil {
-				// TODO: We cannot remove the existing stream - we have to only send the close message!
-				c.CloseStream(&msg.StreamID, messages.CloseReasonUndefined)
-			} else {
+			if s != nil {
 				s.in <- msg
+			} else {
+				c.l.Warn("received StartTransmission packet for unknown stream",
+					zap.String("stream_id", msg.StreamID.String()),
+				)
+
+				// cannot remove the stream since it does not exist - only can
+				// send a close message
+				c.sendClosePacket(msg.StreamID, messages.CloseReasonUndefined)
 			}
 
-			// TODO: Remove
-			return
 		case *messages.Close:
-			// TODO: Close the stream, but not the connection
+			// send the message to the stream to handle it (i.e. close itself)
+			s := c.getStream(msg.StreamID)
+			if s != nil {
+				s.in <- msg
+			} else {
+				c.l.Warn("received Close packet for unknown stream",
+					zap.String("stream_id", msg.StreamID.String()),
+				)
+
+				// since we did get a close packet it's safe to assume the peer
+				// closed the stream. Therefore, we don't need to send a close packet
+			}
 
 		case *messages.MetaReq:
 			// TODO: handle the request (concurrently?)
@@ -218,7 +227,10 @@ func (c *Conn) handleServerConnection() {
 			c.l.Error("unknown message type",
 				zap.Uint8("type_encoding", uint8(h.MessageType)),
 			)
-			// TODO: need to close since we don't know how many bytes to skip
+
+			// close whole connection since we don't know how much bytes to advance
+			closeConn(fmt.Sprintf("[%d]", h.MessageType), errors.New("unknown message type"))
+			return
 		}
 	}
 }
@@ -238,13 +250,14 @@ func (c *Conn) handleServerStream(s *stream) {
 
 	c.wg.Add(1)
 	defer c.wg.Done()
+	defer s.l.Info("closed stream")
 
 	// wait for the FileReq packet
 	var msg messages.BRFTMessage
 	select {
 	case msg = <-s.in:
 	case <-c.close:
-		s.l.Info("stopping stream")
+		c.CloseStream(s, false, 0)
 		return
 	}
 
@@ -253,12 +266,18 @@ func (c *Conn) handleServerStream(s *stream) {
 	switch v := msg.(type) {
 	case *messages.FileReq:
 		req = v
+	case *messages.Close:
+		s.l.Warn("received Close packet",
+			zap.String("reason", v.Reason.String()),
+		)
+		c.CloseStream(s, false, 0)
+		return
 	default:
 		s.l.Error("unexpected message type",
 			zap.String("expected_message_type", "FileRequest"),
 			zap.String("actual_message", spew.Sdump("\n", v)),
 		)
-		c.CloseStream(&s.id, messages.CloseReasonUndefined)
+		c.CloseStream(s, true, messages.CloseReasonUndefined)
 		return
 	}
 
@@ -275,25 +294,26 @@ func (c *Conn) handleServerStream(s *stream) {
 	if errors.Is(err, os.ErrNotExist) {
 		s.l.Error("file does not exists - closing stream")
 		// close the stream, but keep the connection open
-		c.CloseStream(&s.id, messages.CloseReasonFileNotFound)
+		c.CloseStream(s, true, messages.CloseReasonFileNotFound)
 		return
 	} else if err != nil {
 		s.l.Error("unable to open file - closing stream", zap.Error(err))
 		// close the stream, but keep the connection open
-		c.CloseStream(&s.id, messages.CloseReasonUndefined)
+		c.CloseStream(s, true, messages.CloseReasonUndefined)
 		return
 	}
 	s.fileName = req.FileName
 	s.requestedChecksum = req.Checksum
 	resp.FileSize = s.f.Size()
 	resp.Checksum = s.f.Checksum()
+	s.l.With(zap.String("file_name", s.fileName))
 
 	// handle resumption
 	if req.Flags.IsSet(messages.FileReqFlagResumption) {
 		// we need a checksum for resumption
 		if bytes.Equal(req.Checksum, make([]byte, common.ChecksumSize)) {
 			// close the stream, but keep the connection open
-			c.CloseStream(&s.id, messages.CloseReasonResumeNoChecksum)
+			c.CloseStream(s, true, messages.CloseReasonResumeNoChecksum)
 			return
 		}
 
@@ -310,7 +330,7 @@ func (c *Conn) handleServerStream(s *stream) {
 			zap.String("received_checksum", spew.Sdump("\n", req.Checksum)),
 		)
 		// close the stream, but keep the connection open
-		c.CloseStream(&s.id, messages.CloseReasonChecksumInvalid)
+		c.CloseStream(s, true, messages.CloseReasonChecksumInvalid)
 		return
 	}
 
@@ -376,7 +396,7 @@ func (c *Conn) handleServerStream(s *stream) {
 			)
 			// actually close the stream since something went wrong on our
 			// side, but keep the connection open
-			c.CloseStream(&s.id, messages.CloseReasonUndefined)
+			c.CloseStream(s, true, messages.CloseReasonUndefined)
 			return
 		}
 
@@ -395,7 +415,7 @@ func (c *Conn) handleServerStream(s *stream) {
 			zap.Error(err),
 		)
 		// close the stream, but keep the connection open
-		c.CloseStream(&s.id, messages.CloseReasonUndefined)
+		c.CloseStream(s, true, messages.CloseReasonUndefined)
 		return
 	}
 
@@ -410,7 +430,7 @@ func (c *Conn) handleServerStream(s *stream) {
 	select {
 	case c.outCtrl <- data:
 	case <-c.close:
-		s.l.Info("stopping stream")
+		c.CloseStream(s, false, 0)
 		return
 	}
 
@@ -418,7 +438,7 @@ func (c *Conn) handleServerStream(s *stream) {
 	select {
 	case msg = <-s.in:
 	case <-c.close:
-		s.l.Info("stopping stream")
+		c.CloseStream(s, false, 0)
 		return
 	}
 
@@ -427,12 +447,18 @@ func (c *Conn) handleServerStream(s *stream) {
 	switch v := msg.(type) {
 	case *messages.StartTransmission:
 		st = v
+	case *messages.Close:
+		s.l.Warn("received Close packet",
+			zap.String("reason", v.Reason.String()),
+		)
+		c.CloseStream(s, false, 0)
+		return
 	default:
 		s.l.Error("unexpected message type",
 			zap.String("expected_message_type", "StartTransmission"),
 			zap.String("actual_message", spew.Sdump("\n", v)),
 		)
-		c.CloseStream(&s.id, messages.CloseReasonUndefined)
+		c.CloseStream(s, true, messages.CloseReasonUndefined)
 		return
 	}
 
@@ -442,7 +468,7 @@ func (c *Conn) handleServerStream(s *stream) {
 			zap.String("actual_checksum", spew.Sdump("\n", s.f.Checksum())),
 			zap.String("received_checksum", spew.Sdump("\n", st.Checksum)),
 		)
-		c.CloseStream(&s.id, messages.CloseReasonChecksumInvalid)
+		c.CloseStream(s, true, messages.CloseReasonChecksumInvalid)
 		return
 	}
 
@@ -452,7 +478,7 @@ func (c *Conn) handleServerStream(s *stream) {
 			zap.Uint64("offset", st.Offset),
 			zap.Uint64("file_size", s.f.Size()),
 		)
-		c.CloseStream(&s.id, messages.CloseReasonInvalidOffset)
+		c.CloseStream(s, true, messages.CloseReasonInvalidOffset)
 		return
 	}
 
@@ -462,32 +488,37 @@ func (c *Conn) handleServerStream(s *stream) {
 
 	// start sending data from the file
 	for {
-		// TODO: assemble the packet
+		// assemble the data packet
 		d := messages.Data{
 			StreamID: s.id,
 			Data:     make([]byte, s.chunkSize),
 		}
 
-		// TODO: read a chunk size from the file
+		// read a chunk size from the file
 		lastPacket := false
 		n, err := s.f.Read(d.Data)
 		if err != nil {
 			s.l.Error("unable to read from file", zap.Error(err))
 
-			c.CloseStream(&s.id, messages.CloseReasonUndefined)
+			// close the stream, but keep the connection open
+			c.CloseStream(s, true, messages.CloseReasonUndefined)
 			return
 		} else if n < len(d.Data) {
 			lastPacket = true
 			d.Data = d.Data[:n]
 		}
 
-		// TODO: optionally compress the data
+		// (optionally) compress the data
 		if s.comp != nil {
 			d.Data, err = s.comp.Compress(d.Data)
 			if err != nil {
-				s.l.Error("unable to compress chunk", zap.Error(err))
+				s.l.Error("unable to compress chunk",
+					zap.String("data", spew.Sdump("\n", d.Data)),
+					zap.Error(err),
+				)
 
-				c.CloseStream(&s.id, messages.CloseReasonUndefined)
+				// close the stream, but keep the connection open
+				c.CloseStream(s, true, messages.CloseReasonUndefined)
 				return
 			}
 		}
@@ -498,8 +529,9 @@ func (c *Conn) handleServerStream(s *stream) {
 				zap.String("packet", spew.Sdump("\n", d)),
 				zap.Error(err),
 			)
+
 			// close the stream, but keep the connection open
-			c.CloseStream(&s.id, messages.CloseReasonUndefined)
+			c.CloseStream(s, true, messages.CloseReasonUndefined)
 			return
 		}
 
@@ -513,41 +545,17 @@ func (c *Conn) handleServerStream(s *stream) {
 		select {
 		case c.outData <- data:
 		case <-c.close:
-			s.l.Info("stopping data stream")
+			c.CloseStream(s, false, 0)
 			return
 		}
 
 		if lastPacket {
 			// sent last packet
-			s.l.Info("sent last packet") // TODO: enrich
-			// TODO: maybe introduce a high timeout (~ 10s)
-			// send the data to the sender routing
-			cl := messages.Close{
-				StreamID: s.id,
-				Reason:   messages.CloseReasonTransferComplete,
-			}
-			data, err := cl.Encode(s.l)
-			if err != nil {
-				c.l.Error("unable to encode Close",
-					zap.String("packet", spew.Sdump("\n", cl)),
-					zap.Error(err),
-				)
-				// close the stream, but keep the connection open
-				c.CloseStream(&s.id, messages.CloseReasonUndefined)
-				return
-			}
+			s.l.Debug("sent last packet")
 
-			select {
-			// This actually must co in data channel to be guaranteed to be
-			// after the last Data packet
-			case c.outData <- data:
-			case <-c.close:
-				s.l.Info("stopping data stream")
-				return
-			}
-
-			// TODO: use close stream!
-			// c.CloseStream(&s.id, messages.CloseReasonTransferComplete)
+			// signalize the peer that the transfer is complete by sending a
+			// close packet with the TransferComplete reason
+			c.CloseStream(s, true, messages.CloseReasonTransferComplete)
 			return
 		}
 	}

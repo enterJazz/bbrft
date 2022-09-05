@@ -36,6 +36,8 @@ func WithProd(v bool) Option {
 	}
 }
 
+// TODO: Add option for log level
+
 func NewLogger(opts ...Option) (*zap.Logger, error) {
 	o := NewOptions()
 	for _, opt := range opts {
@@ -55,9 +57,6 @@ func NewLogger(opts ...Option) (*zap.Logger, error) {
 		zap.RegisterEncoder("pretty-console", NewEscapeSeqJSONEncoder)
 		conf.Encoding = "pretty-console"
 	}
-
-	// TODO: Revert
-	conf.Level = zap.NewAtomicLevel()
 
 	return conf.Build()
 }

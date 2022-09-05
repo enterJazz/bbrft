@@ -1,6 +1,8 @@
 package messages
 
 import (
+	"strconv"
+
 	"gitlab.lrz.de/bbrft/cyberbyte"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/cryptobyte"
@@ -23,6 +25,10 @@ type BRFTMessage interface {
 }
 
 type StreamID uint16
+
+func (s StreamID) String() string {
+	return strconv.Itoa(int(s))
+}
 
 // TODO: Maybe also create a cyberbyte.Builder
 func AddUint64(b *cryptobyte.Builder, v uint64) {

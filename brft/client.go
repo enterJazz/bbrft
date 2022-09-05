@@ -2,6 +2,7 @@ package brft
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -140,19 +141,6 @@ func (c *Conn) DownloadFile(
 	// start handling of the stream
 	c.handleClientStream(s)
 
-	// clean up the stream corresponding to the requested file after a set
-	// amount of time
-	// TODO: adjust to new structure
-	// go func() {
-	// 	time.Sleep(time.Minute)
-	// 	c.reqStreamsMu.Lock()
-	// 	defer c.reqStreamsMu.Unlock()
-	// 	if s, ok := c.reqStreams[fileName]; ok {
-	// 		s.l.Warn("cleaning up unanswered FileRequest")
-	// 		delete(c.reqStreams, fileName)
-	// 	}
-	// }()
-
 	return nil
 }
 
@@ -160,7 +148,6 @@ func (c *Conn) DownloadFile(
 // read the whole message from the btp.Conn
 func (c *Conn) handleClientConnection() {
 	closeConn := func(messageType string, err error) {
-		close(c.close)
 		c.l.Error("unable to handle packet - closing connection",
 			zap.String("message_type", messageType),
 			zap.Error(err),
@@ -176,17 +163,10 @@ func (c *Conn) handleClientConnection() {
 	go c.sendMessages(c.outCtrl, c.outData)
 
 	for {
+		// FIXME: this is blocking frever - we need to either read or listen on c.close channel
 		inMsg, h, err := c.readMsg()
 		if err != nil {
-			// errors already handled by function
-			// TODO: maybe only return if we cannot read, not if the header is
-			// unknown - however the question is how we know how long the
-			// message is in order to advance over it
-			if inMsg != nil {
-				closeConn(inMsg.Name(), err)
-			} else {
-				closeConn("could not read message_type", err)
-			}
+			closeConn("could not read message_type", err)
 			return
 		}
 
@@ -198,34 +178,42 @@ func (c *Conn) handleClientConnection() {
 			if s != nil {
 				s.in <- msg
 			} else {
-				// TODO: We cannot remove the existing stream - we have to only send the close message!
-				c.CloseStream(nil, messages.CloseReasonUndefined)
-			}
+				c.l.Warn("received FileResp packet for unknown stream",
+					zap.String("stream_id", msg.StreamID.String()),
+				)
 
-			// handle the file transfer negotiation
-			// err = c.handleClientTransferNegotiation(resp)
-			// if err != nil {
-			// 	closeConn("FileResponse", err)
-			// 	return
-			// }
+				// cannot remove the stream since it does not exist - only can
+				// send a close message
+				c.sendClosePacket(msg.StreamID, messages.CloseReasonUndefined)
+			}
 
 		case *messages.Data:
 			s := c.getStream(msg.StreamID)
 			if s != nil {
 				s.in <- msg
 			} else {
-				// TODO: We cannot remove the existing stream - we have to only send the close message!
-				c.CloseStream(nil, messages.CloseReasonUndefined)
+				c.l.Warn("received Data packet for unknown stream",
+					zap.String("stream_id", msg.StreamID.String()),
+				)
+
+				// cannot remove the stream since it does not exist - only can
+				// send a close message
+				c.sendClosePacket(msg.StreamID, messages.CloseReasonUndefined)
 			}
 
 		case *messages.Close:
-			// TODO: handle gracefully
+
+			// send the message to the stream to handle it (i.e. close itself)
 			s := c.getStream(msg.StreamID)
 			if s != nil {
 				s.in <- msg
 			} else {
-				// TODO: We cannot remove the existing stream - we have to only send the close message!
-				c.CloseStream(nil, messages.CloseReasonUndefined)
+				c.l.Warn("received Close packet for unknown stream",
+					zap.String("stream_id", msg.StreamID.String()),
+				)
+
+				// since we did get a close packet it's safe to assume the peer
+				// closed the stream. Therefore, we don't need to send a close packet
 			}
 
 		case *messages.MetaResp:
@@ -244,7 +232,10 @@ func (c *Conn) handleClientConnection() {
 			c.l.Error("unknown message type",
 				zap.Uint8("type_encoding", uint8(h.MessageType)),
 			)
-			// TODO: Probably close
+
+			// close whole connection since we don't know how much bytes to advance
+			closeConn(fmt.Sprintf("[%d]", h.MessageType), errors.New("unknown message type"))
+			return
 		}
 
 	}
@@ -263,6 +254,7 @@ func (c *Conn) handleClientStream(s *stream) {
 
 	c.wg.Add(1)
 	defer c.wg.Done()
+	defer s.l.Info("closed stream")
 
 	// update the stream
 	s.l = s.l.With(
@@ -276,7 +268,7 @@ func (c *Conn) handleClientStream(s *stream) {
 	select {
 	case msg = <-s.in:
 	case <-c.close:
-		s.l.Info("stopping stream")
+		c.CloseStream(s, false, 0)
 		return
 	}
 
@@ -285,12 +277,18 @@ func (c *Conn) handleClientStream(s *stream) {
 	switch v := msg.(type) {
 	case *messages.FileResp:
 		resp = v
+	case *messages.Close:
+		s.l.Warn("received Close packet",
+			zap.String("reason", v.Reason.String()),
+		)
+		c.CloseStream(s, false, 0)
+		return
 	default:
 		s.l.Error("unexpected message type",
 			zap.String("expected_message_type", "FileResponse"),
 			zap.String("actual_message", spew.Sdump("\n", v)),
 		)
-		c.CloseStream(&s.id, messages.CloseReasonUndefined)
+		c.CloseStream(s, true, messages.CloseReasonUndefined)
 		return
 	}
 
@@ -304,7 +302,7 @@ func (c *Conn) handleClientStream(s *stream) {
 		)
 
 		// close the stream, but keep the connection open
-		c.CloseStream(&s.id, messages.CloseReasonChecksumInvalid)
+		c.CloseStream(s, true, messages.CloseReasonChecksumInvalid)
 		return
 	}
 
@@ -331,7 +329,7 @@ func (c *Conn) handleClientStream(s *stream) {
 			)
 
 			// close the stream, but keep the connection open
-			c.CloseStream(&s.id, messages.CloseReasonUnexpectedOptionalHeader)
+			c.CloseStream(s, true, messages.CloseReasonUnexpectedOptionalHeader)
 			return
 
 		case *messages.UnknownOptionalHeader:
@@ -340,7 +338,7 @@ func (c *Conn) handleClientStream(s *stream) {
 			)
 
 			// close the stream, but keep the connection open
-			c.CloseStream(&s.id, messages.CloseReasonUnsupportedOptionalHeader)
+			c.CloseStream(s, true, messages.CloseReasonUnsupportedOptionalHeader)
 			return
 
 		default:
@@ -349,7 +347,7 @@ func (c *Conn) handleClientStream(s *stream) {
 			)
 
 			// close the stream, but keep the connection open
-			c.CloseStream(&s.id, messages.CloseReasonUnsupportedOptionalHeader)
+			c.CloseStream(s, true, messages.CloseReasonUnsupportedOptionalHeader)
 			return
 		}
 	}
@@ -364,7 +362,7 @@ func (c *Conn) handleClientStream(s *stream) {
 			zap.Error(err),
 		)
 		// close the stream, but keep the connection open´
-		c.CloseStream(&s.id, messages.CloseReasonUndefined) // there's only a reason for files that are too big
+		c.CloseStream(s, true, messages.CloseReasonUndefined) // there's only a reason for files that are too big
 		return
 	}
 
@@ -389,7 +387,7 @@ func (c *Conn) handleClientStream(s *stream) {
 			zap.Error(err),
 		)
 		// close the stream, but keep the connection open
-		c.CloseStream(&s.id, messages.CloseReasonUndefined)
+		c.CloseStream(s, true, messages.CloseReasonUndefined)
 		return
 	}
 
@@ -404,7 +402,7 @@ func (c *Conn) handleClientStream(s *stream) {
 	select {
 	case c.outCtrl <- data:
 	case <-c.close:
-		s.l.Warn("closed before stream started")
+		c.CloseStream(s, false, 0)
 		return
 	}
 
@@ -416,34 +414,97 @@ func (c *Conn) handleClientStream(s *stream) {
 		select {
 		case msg = <-s.in:
 		case <-c.close:
-			s.l.Warn("closed before stream started")
+			c.CloseStream(s, false, 0)
 			return
 		}
 
 		switch m := msg.(type) {
 		case *messages.Data:
-			s.f.Write(m.Data)
-		case *messages.Close:
-			if m.Reason == messages.CloseReasonTransferComplete {
-				// TODO: implement
-				// err := s.f.CheckChecksum()
-				// if err != nil {
-				// 	s.l.Error("unable to clean up file", zap.Error(err))
-				// 	return
-				// }
-
-				// clean up the file
-				s.l.Info("finished receiving file")
-				err := s.f.StripChecksum()
+			// (optionally) decompress the data
+			data := m.Data
+			if s.comp != nil {
+				data, err = s.comp.Compress(data)
 				if err != nil {
-					s.l.Error("unable to clean up file", zap.Error(err))
+					s.l.Error("unable to decompress chunk",
+						zap.String("data", spew.Sdump("\n", m.Data)),
+						zap.Error(err),
+					)
+
+					c.CloseStream(s, true, messages.CloseReasonUndefined)
 					return
 				}
 			}
 
+			n, err := s.f.Write(data)
+			if err != nil {
+				s.l.Error("unable to write to file",
+					zap.String("data", spew.Sdump("\n", m.Data)),
+					zap.Error(err),
+				)
+
+				c.CloseStream(s, true, messages.CloseReasonUndefined)
+				return
+			} else if n != len(data) {
+				s.l.Error("partial file write",
+					zap.Int("expected", len(data)),
+					zap.Int("actual", n),
+				)
+
+				c.CloseStream(s, true, messages.CloseReasonUndefined)
+				return
+			}
+
+		case *messages.Close:
+			// clean up the stream after finishing the file
+			// no need to send a close packet since the peer already sent us one
+			defer c.CloseStream(s, false, 0)
+
+			if m.Reason == messages.CloseReasonTransferComplete {
+				s.l.Debug("finished receiving file")
+
+				// make sure the file matches the initially advertised checksum
+				correct, computedChecksum, err := s.f.CheckChecksum()
+				if err != nil {
+					s.l.Error("unable to validate the checksum of complete file",
+						zap.Error(err),
+					)
+					return
+				} else if !correct {
+					s.l.Error("invalid checksum of complete file",
+						zap.String("expected_checksum", spew.Sdump("\n", s.f.Checksum())),
+						zap.String("actual_checksum", spew.Sdump("\n", computedChecksum)),
+					)
+
+					// TODO: maybe remove the file
+					return
+				} else {
+					s.l.Debug("downloaded file checksum matches",
+						zap.String("checksum", spew.Sdump("\n", computedChecksum)),
+					)
+				}
+
+				// clean up the file - this will also close the file handle
+				err = s.f.StripChecksum()
+				if err != nil {
+					s.l.Error("unable to clean up file", zap.Error(err))
+					return
+				}
+
+				s.l.Info("finished file download")
+			} else {
+				s.l.Warn("received Close packet",
+					zap.String("reason", m.Reason.String()),
+				)
+			}
+
 			return
 		default:
-			s.l.Warn("unexpected msg type received in stream", zap.String("packet", spew.Sdump("\n", st)))
+			s.l.Error("unexpected message type",
+				zap.String("expected_message_type", "FileRequest"),
+				zap.String("actual_message", spew.Sdump("\n", m)),
+			)
+
+			c.CloseStream(s, true, messages.CloseReasonUndefined)
 		}
 	}
 }

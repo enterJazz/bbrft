@@ -25,6 +25,28 @@ const (
 	// ...
 )
 
+var closeReasonToString = map[CloseReason]string{
+	CloseReasonUndefined:                 "Undefined",
+	CloseReasonTransferComplete:          "Transfer Complete",
+	CloseReasonChecksumInvalid:           "Checksum Invalid",
+	CloseReasonInvalidOffset:             "Invalid Offset",
+	CloseReasonNotEnoughSpace:            "Not Enough Space",
+	CloseReasonInvalidFlags:              "Invalid Flags",
+	CloseReasonResumeNoChecksum:          "Resume No Checksum",
+	CloseReasonFileNotFound:              "File Not Found",
+	CloseReasonUnsupportedOptionalHeader: "Unsupported Optional Header",
+	CloseReasonUnexpectedOptionalHeader:  "Unexpected Optional Header",
+	CloseReasonStreamIDTaken:             "Stream ID Taken",
+}
+
+func (r CloseReason) String() string {
+	if s, ok := closeReasonToString[r]; !ok {
+		return "unknown"
+	} else {
+		return s
+	}
+}
+
 type Close struct {
 	StreamID StreamID
 	Reason   CloseReason
