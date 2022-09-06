@@ -96,12 +96,11 @@ func (m *MetaResp) Decode(l *zap.Logger, s *cyberbyte.String) error {
 	if err := s.ReadUint8(&isExtendedByte); err != nil {
 		return ErrReadFailed
 	}
-	if isExtendedByte == trueByte {
+	// check if ends with 1 ; only last bit counts
+	if isExtendedByte%2 == 1 {
 		m.isExtended = true
-	} else if isExtendedByte == falseByte {
-		m.isExtended = false
 	} else {
-		return ErrInvalidValue
+		m.isExtended = false
 	}
 
 	items := make([]*MetaItem, 0, numItems)
