@@ -152,7 +152,10 @@ func (c *Conn) handleServerConnection() {
 		case *messages.FileReq:
 			// create a new stream
 			s := &stream{
-				l:         c.l.With(zap.Uint16("stream_id", uint16(msg.StreamID))),
+				l: c.l.With(
+					zap.Uint16("stream_id", uint16(msg.StreamID)),
+					zap.String("file_name", msg.FileName),
+				),
 				id:        msg.StreamID,
 				chunkSize: messages.ComputeChunkSize(c.options.chunkSizeFactor),
 				in:        make(chan messages.BRFTMessage, 50),
@@ -309,7 +312,6 @@ func (c *Conn) handleServerStream(s *stream) {
 	s.requestedChecksum = req.Checksum
 	resp.FileSize = s.f.Size()
 	resp.Checksum = s.f.Checksum()
-	s.l.With(zap.String("file_name", s.fileName))
 
 	// handle resumption
 	if req.Flags.IsSet(messages.FileReqFlagResumption) {
@@ -540,7 +542,7 @@ func (c *Conn) handleServerStream(s *stream) {
 
 		s.l.Debug("sending Data packet",
 			zap.String("packet", spew.Sdump("\n", d)),
-			zap.String("packet_encoded", spew.Sdump("\n", data)),
+			// TODO: re-enable zap.String("packet_encoded", spew.Sdump("\n", data)),
 		)
 
 		// TODO: maybe introduce a high timeout (~ 10s)

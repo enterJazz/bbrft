@@ -151,7 +151,10 @@ func OpenFile(
 }
 
 func (f *File) Close() (err error) {
-	return f.f.Close()
+	if f != nil && f.f != nil {
+		return f.f.Close()
+	}
+	return nil
 }
 
 func (f *File) Read(b []byte) (n int, err error) {

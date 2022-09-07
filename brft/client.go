@@ -15,6 +15,7 @@ import (
 	"gitlab.lrz.de/bbrft/btp"
 	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // TODO: move
@@ -97,6 +98,22 @@ func (c *Conn) ListFileMetaData(
 	l.Debug("sent MetaDataRequest")
 
 	return nil
+}
+
+func (c *Conn) DownloadFiles(fileNames []string) error {
+	if len(fileNames) == 0 {
+		return errors.New("no files give")
+	}
+
+	g := new(errgroup.Group)
+	for _, f := range fileNames {
+		f := f // https://golang.org/doc/faq#closures_and_goroutines
+		g.Go(func() error {
+			return c.DownloadFile(f)
+		})
+	}
+
+	return g.Wait()
 }
 
 func (c *Conn) DownloadFile(
