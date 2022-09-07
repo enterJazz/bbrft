@@ -16,7 +16,7 @@ const (
 )
 
 func setupTest(t *testing.T) *Conn {
-	ld, _ := log.NewLogger()
+	ld, _ := log.NewLogger(log.WithProd(true))
 	lp, err := log.NewLogger(log.WithProd(false))
 	opt := &ServerOptions{NewDefaultOptions(lp)}
 	s, laddr, err := NewServer(ld, "127.0.0.1:1337", serverDir, opt)

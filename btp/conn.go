@@ -90,7 +90,8 @@ type Conn struct {
 	ctxCancel          context.CancelFunc
 	rttMeasurement     *RTTMeasurement
 
-	txChan chan messages.Codable
+	txChan     chan messages.Codable
+	txPrioChan chan messages.Codable
 
 	sequentialDataReader  *sequentialDataReader
 	packetNumberGenerator packetNumberGenerator
@@ -266,6 +267,7 @@ func newConn(conn *net.UDPConn, options ConnOptions, l *zap.Logger) *Conn {
 		openChan:        make(chan error),
 		closeChan:       make(chan error),
 		txChan:          make(chan messages.Codable, options.MaxCwndSize),
+		txPrioChan:      make(chan messages.Codable, options.MaxCwndSize),
 		// TODO: use some better buffer defaults
 		sequentialDataReader: NewDataReader(100, 50),
 	}
@@ -284,6 +286,12 @@ func newConn(conn *net.UDPConn, options ConnOptions, l *zap.Logger) *Conn {
 
 func (c *Conn) send(msg messages.Codable) (n int, err error) {
 	c.txChan <- msg
+	// TODO: update return parameters
+	return int(msg.Size()), nil
+}
+
+func (c *Conn) send_prio(msg messages.Codable) (n int, err error) {
+	c.txPrioChan <- msg
 	// TODO: update return parameters
 	return int(msg.Size()), nil
 }
@@ -325,7 +333,7 @@ func (c *Conn) transmit(msg messages.Codable) (n int, err error) {
 	}
 
 	n, err = c.conn.Write(buf)
-	l.Debug("sending", FHeaderMessageTypeString(msg.GetHeader().MessageType), zap.String("raddr", c.conn.RemoteAddr().String()), zap.Int("len", n))
+	l.Debug("sending", FHeaderMessageTypeString(msg.GetHeader().MessageType), zap.Uint16("seq_nr", msg.GetHeader().SeqNr), zap.String("raddr", c.conn.RemoteAddr().String()), zap.Int("len", n))
 
 	if err != nil {
 		return
@@ -469,7 +477,7 @@ func (c *Conn) createConnReq() (req *messages.Conn, err error) {
 }
 
 func (c *Conn) sendAck(seqNr uint16) error {
-	_, err := c.send(&messages.Ack{
+	_, err := c.send_prio(&messages.Ack{
 		PacketHeader: messages.PacketHeader{
 			ProtocolType: c.Options.Version,
 			MessageType:  messages.MessageTypeAck,
@@ -482,7 +490,7 @@ func (c *Conn) sendAck(seqNr uint16) error {
 func (c *Conn) onMessage(msg messages.Codable) error {
 	l := c.logger
 
-	l.Debug("incoming msg", FHeaderMessageTypeString(msg.GetHeader().MessageType))
+	l.Debug("incoming msg", zap.Uint16("seq_nr", msg.GetHeader().SeqNr), FHeaderMessageTypeString(msg.GetHeader().MessageType))
 
 	h := msg.GetHeader()
 	// instantiate object depending on header type
@@ -554,7 +562,7 @@ func (c *Conn) onMessage(msg messages.Codable) error {
 		}
 		// TODO: @wlad should we first send ack or process message?
 		c.sendAck(msg.GetHeader().SeqNr)
-		c.sequentialDataReader.Push(msg.(*messages.Data))
+		go c.sequentialDataReader.Push(msg.(*messages.Data))
 	case messages.MessageTypeClose:
 		if !c.isConnOpen {
 			return ErrConnectionNotReady
@@ -599,13 +607,19 @@ func (c *Conn) run() error {
 
 runLoop:
 	for {
-		// Close immediately if requested
 		select {
+		// Close immediately if requested
 		case closeErr = <-c.closeChan:
 			l.Error("connection loop terminated", zap.Error(closeErr))
 			c.teardown()
 			break runLoop
-
+		case prio_msg := <-c.txPrioChan:
+			_, err := c.transmit(prio_msg)
+			// TODO: maybe take care of failed transmissions due to connection problems
+			// IDEA: if transmission fails place packet back on queue
+			if err != nil {
+				l.Error("message handling error", zap.Error(err))
+			}
 		default:
 		}
 
@@ -618,12 +632,14 @@ runLoop:
 				if err != nil {
 					l.Error("message handling error", zap.Error(err))
 				}
+
 			default:
 				// l.Debug("no outgoing messages")
 			}
 		}
-
+		// l.Debug("handle retransmit 1")
 		err := c.proccessRetransmission()
+		// l.Debug("handle retransmit 2")
 		if err != nil {
 			return err
 		}

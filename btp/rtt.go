@@ -7,7 +7,7 @@ const (
 	oneMinusAlpha     = 1 - rttAlpha
 	rttBeta           = 0.25
 	oneMinusBeta      = 1 - rttBeta
-	defaultInitialRTT = 100 * time.Millisecond
+	defaultInitialRTT = 500 * time.Millisecond
 )
 
 type RTTMeasurement struct {
