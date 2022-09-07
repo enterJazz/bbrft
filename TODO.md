@@ -1,10 +1,11 @@
 # TODO
+- go through the requirements
+- go over the feedback of the prof
 
 ## BRFT
-- figure out when the conn&stream need to be locked
-- graceful shutdown of connections
-- adapt meta messages to the new Message interface
-- create a log package and refactor logging 
+- create some kind of callBack/channel that allows to signal the completion of the download (michi)
+- Server must honor the offset set if it is a retransmit 
+- graceful shutdown of connections (michi)
 
 - client-server tests
     - simple test for negotiation
@@ -12,16 +13,17 @@
     - make sure the linking between server and client works correctly!
     - resumption
     - multiple concurrent downloads
-    - resumption
+    - connection migration
     - stress test with A LOT of downloads
 
 ## MetaData
 - Do we allow recursive directories on the server?
-
+    - not defined in specs -> no
 
 ### Nice to haves
 - add a maximum number of streams per connection/peer
 - support for multiple files with the same name and different revision
+- create a log package and refactor logging
 
 ## CLI
 - add cli support for enabling/disabling compression

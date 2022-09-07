@@ -165,6 +165,7 @@ func (f *File) Write(b []byte) (n int, err error) {
 	return f.f.Write(b)
 }
 
+// FIXME: on the client we will probably have to reload the stats
 // Size will return the (current) size of the underlying file. In case the file
 // is a client file, the actual size will be reduced by the size of the
 // additional information (e.g. checksum). Therefore only the size of the actual
@@ -172,7 +173,7 @@ func (f *File) Write(b []byte) (n int, err error) {
 func (f *File) Size() uint64 {
 	s := uint64(f.stat.Size())
 	if f.isClientFile {
-		s -= uint64(len(fileSignature) + common.ChecksumSize) // TODO: Make const/var
+		s -= uint64(len(fileSignature) + common.ChecksumSize)
 	}
 	return s
 }

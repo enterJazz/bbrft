@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"sync"
@@ -57,6 +58,7 @@ func Dial(
 		return nil, fmt.Errorf("unable to create connection: %w", err)
 	}
 
+	// handle incomming messages
 	go c.handleClientConnection()
 
 	return c, nil
@@ -100,27 +102,38 @@ func (c *Conn) ListFileMetaData(
 	return nil
 }
 
-func (c *Conn) DownloadFiles(fileNames []string) error {
+func (c *Conn) DownloadFiles(fileNames []string) (map[string]<-chan float32, error) {
 	if len(fileNames) == 0 {
-		return errors.New("no files give")
+		return nil, errors.New("no files give")
 	}
 
 	g := new(errgroup.Group)
+	mu := sync.Mutex{}
+	progs := make(map[string]<-chan float32, len(fileNames))
 	for _, f := range fileNames {
 		f := f // https://golang.org/doc/faq#closures_and_goroutines
 		g.Go(func() error {
-			return c.DownloadFile(f)
+			prog, err := c.DownloadFile(f)
+			if err != nil {
+				return err
+			}
+
+			mu.Lock()
+			progs[f] = prog
+			mu.Unlock()
+
+			return nil
 		})
 	}
 
-	return g.Wait()
+	return progs, g.Wait()
 }
 
 func (c *Conn) DownloadFile(
 	fileName string,
-) error {
+) (<-chan float32, error) {
 	if !c.isClient {
-		return ErrExpectedClientConnection
+		return nil, ErrExpectedClientConnection
 	}
 
 	c.l.Info("initiating new dowload")
@@ -156,6 +169,7 @@ func (c *Conn) DownloadFile(
 		),
 		id:                sid,
 		fileName:          fileName,
+		progress:          make(chan float32, 100),
 		requestedChecksum: req.Checksum,
 		//isResumption: , TODO: set
 		//offset: , TODO: set
@@ -175,7 +189,7 @@ func (c *Conn) DownloadFile(
 
 	data, err := req.Encode(c.l)
 	if err != nil {
-		return fmt.Errorf("unable to encode FileRequest: %w", err)
+		return nil, fmt.Errorf("unable to encode FileRequest: %w", err)
 	}
 
 	s.l.Debug("sending FileRequest",
@@ -186,7 +200,7 @@ func (c *Conn) DownloadFile(
 	// write the encoded message
 	_, err = c.conn.Write(data)
 	if err != nil {
-		return fmt.Errorf("unable to encode FileRequest: %w", err)
+		return nil, fmt.Errorf("unable to encode FileRequest: %w", err)
 	}
 
 	// add the stream to map of streams
@@ -195,9 +209,9 @@ func (c *Conn) DownloadFile(
 	c.streamsMu.Unlock()
 
 	// start handling of the stream
-	c.handleClientStream(s)
+	go c.handleClientStream(s)
 
-	return nil
+	return s.progress, nil
 }
 
 // NOTE: This function can only run in a single thread, since we always need to
@@ -422,6 +436,7 @@ func (c *Conn) handleClientStream(s *stream) {
 		c.CloseStream(s, true, messages.CloseReasonUndefined) // there's only a reason for files that are too big
 		return
 	}
+	s.totalSize = resp.FileSize
 
 	st := messages.StartTransmission{
 		StreamID: resp.StreamID,
@@ -479,8 +494,9 @@ func (c *Conn) handleClientStream(s *stream) {
 		case *messages.Data:
 			// (optionally) decompress the data
 			data := m.Data
+			dLen := len(m.Data)
 			if s.comp != nil {
-				data, err = s.comp.Compress(data)
+				data, err = s.comp.Decompress(data)
 				if err != nil {
 					s.l.Error("unable to decompress chunk",
 						zap.String("data", spew.Sdump("\n", m.Data)),
@@ -509,6 +525,33 @@ func (c *Conn) handleClientStream(s *stream) {
 
 				c.CloseStream(s, true, messages.CloseReasonUndefined)
 				return
+			}
+
+			s.totalTransmitted += uint64(dLen)
+
+			if s.totalTransmitted > s.totalSize {
+				s.l.Warn("already received more data than advertised",
+					zap.Uint64("len_advertised", s.totalSize),
+					zap.Uint64("len_received", s.totalTransmitted),
+				)
+				// TODO: should we close the stream?
+			}
+
+			// try to send the current progress
+			prog := float32(math.Min(1.0, (float64(s.totalTransmitted) / float64(s.totalSize))))
+			select {
+			case s.progress <- prog:
+			default:
+				// try to read the first value and append the new one
+				select {
+				case <-s.progress:
+					s.l.Warn("dropped progress entry")
+					select {
+					case s.progress <- prog:
+					default:
+					}
+				default:
+				}
 			}
 
 		case *messages.Close:

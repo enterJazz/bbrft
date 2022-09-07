@@ -21,6 +21,12 @@ type stream struct {
 	fileName          string // only needed during neogtiation
 	requestedChecksum []byte // only needed during neogtiation
 
+	// progress channel transmitting the percentage of the overall progress.
+	// Will beclose when the transfer is complete / canceled
+	totalSize        uint64
+	totalTransmitted uint64
+	progress         chan float32
+
 	// compression
 	comp      compression.Compressor
 	chunkSize int
@@ -28,8 +34,6 @@ type stream struct {
 	// resumption
 	isResumption bool
 	offset       uint64
-
-	handshakeDone bool
 
 	// handle incomming and outgoing messages
 	in chan messages.BRFTMessage
@@ -73,8 +77,9 @@ func (c *Conn) CloseStream(
 		s.l.Error("unable to close file associated with stream", zap.Error(err))
 	}
 
-	// close the channel
+	// close own channels
 	close(s.in)
+	close(s.progress)
 
 	// (optionally) send the close message
 	if sendClosePacket {
