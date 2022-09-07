@@ -30,3 +30,6 @@ go.work
 
 ### GoLand ###
 .idea/
+
+### Ignore test fragments ###
+test/downloads
