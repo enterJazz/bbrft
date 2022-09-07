@@ -216,7 +216,6 @@ func (c *Conn) handleServerConnection() {
 
 		case *messages.MetaReq:
 			c.handleMetaDataReq(*msg)
-			// TODO: handle the request (concurrently?)
 
 		case *messages.FileResp,
 			*messages.Data,
@@ -539,7 +538,7 @@ func (c *Conn) handleServerStream(s *stream) {
 			return
 		}
 
-		s.l.Info("sending Data packet",
+		s.l.Debug("sending Data packet",
 			zap.String("packet", spew.Sdump("\n", d)),
 			zap.String("packet_encoded", spew.Sdump("\n", data)),
 		)
@@ -610,39 +609,24 @@ func (c *Conn) isDuplicateStreamID(newId messages.StreamID) bool {
 }
 
 func (c *Conn) handleMetaDataReq(metaReq messages.MetaReq) {
-	var (
-		metaResps []*messages.MetaResp
-		metaItems []*messages.MetaItem
-	)
-	reqFileName := metaReq.FileName
+	var metaItems []*messages.MetaItem
 
-	defer func() {
+	// helper in case of an error
+	sendEmptyResponse := func() {
 		// send collected metaResps
-		for _, metaResp := range metaResps {
-			data, err := metaResp.Encode(c.l)
-			if err != nil {
-				c.l.Error("failed to encode metaDataResp - skipping", zap.Error(err))
-				continue
-			}
-			c.outData <- data
-		}
-	}()
-
-	addEmptyMetaResp := func() {
-		emptyMetaResp, err := messages.NewMetaResp(nil)
+		data, err := new(messages.MetaResp).Encode(c.l)
 		if err != nil {
-			c.l.Error("failed to create empty meta resp - sending nothing", zap.Error(err))
-		} else {
-			metaResps = append(metaResps, emptyMetaResp)
+			c.l.Error("failed to encode metaDataResp - skipping", zap.Error(err))
 		}
+		c.outCtrl <- data
 	}
 
 	// empty file name: list all available files in dir
-	if reqFileName == EMPTY_FILE_NAME {
+	if metaReq.FileName == EMPTY_FILE_NAME {
 		dirContents, err := ioutil.ReadDir(c.basePath)
 		if err != nil {
 			c.l.Error("unable to open dir - sending empty response", zap.Error(err))
-			addEmptyMetaResp()
+			sendEmptyResponse()
 			return
 		}
 		for _, fInfo := range dirContents {
@@ -657,15 +641,14 @@ func (c *Conn) handleMetaDataReq(metaReq messages.MetaReq) {
 		}
 	} else {
 		// specific filename specified; get extended metadata
-		f, err := OpenFile(reqFileName, c.basePath)
-
+		f, err := OpenFile(metaReq.FileName, c.basePath)
 		if errors.Is(err, os.ErrNotExist) {
-			c.l.Error("file does not exist - sending empty response", zap.String("file not found", reqFileName))
-			addEmptyMetaResp()
+			c.l.Error("file does not exist - sending empty response", zap.String("file_name", metaReq.FileName))
+			sendEmptyResponse()
 			return
 		} else if err != nil {
 			c.l.Error("unable to open file - sending empty response", zap.Error(err))
-			addEmptyMetaResp()
+			sendEmptyResponse()
 			return
 		}
 
@@ -679,52 +662,40 @@ func (c *Conn) handleMetaDataReq(metaReq messages.MetaReq) {
 		)
 		if err != nil {
 			c.l.Error("unable to create metaDataItem - returning empty response", zap.Error(err))
-			addEmptyMetaResp()
+			sendEmptyResponse()
 			return
 		}
 		metaItems = append(metaItems, metaItem)
 	}
 
 	// split metaItems into metaResps
-	splitMetaItemsIntoMetaResp := func() {
-		var nExtractItems int
-		var metaItemsResp []*messages.MetaItem
-		if len(metaItems) < messages.MaxMetaItemsNum {
-			nExtractItems = len(metaItems)
-		} else {
-			nExtractItems = messages.MaxMetaItemsNum
-		}
-		metaItemsResp, metaItems = metaItems[:nExtractItems], metaItems[nExtractItems:]
-		metaResp, err := messages.NewMetaResp(metaItemsResp)
+	metaResps, err := messages.NewMetaResps(metaItems)
+	if err != nil {
+		c.l.Error("unable to create metaDataResp - returning empty response", zap.Error(err))
+		panic("todo")
+	}
+
+	// send collected metaResps
+	for _, metaResp := range metaResps {
+		data, err := metaResp.Encode(c.l)
 		if err != nil {
-			c.l.Error("unable to create metaDataResp - returning empty response", zap.Error(err))
-			panic("todo")
+			c.l.Error("failed to encode metaDataResp - skipping", zap.Error(err))
+			continue
 		}
-		metaResps = append(metaResps, metaResp)
-	}
 
-	splitMetaItemsIntoMetaResp()
-	for len(metaItems) > messages.MaxMetaItemsNum {
-		splitMetaItemsIntoMetaResp()
-	}
-	// sanity check
-	if len(metaItems) != 0 {
-		c.l.Fatal("failed to load all metaDataItems into resps!")
-	}
+		c.l.Debug("sending MetaDataResponses",
+			zap.String("metadata_responses", spew.Sdump("\n", metaResps)),
+			zap.String("metadata_response", spew.Sdump("\n", metaResp)),
+			zap.String("packet_encoded", spew.Sdump("\n", data)),
+		)
 
-	// send generated metaResps upon return (see defer)
+		// TODO: maybe introduce a high timeout (~ 10s)
+		// send the data to the sender routing
+		select {
+		case c.outData <- data:
+		case <-c.close:
+			// we're only receiving the channel message, so no need to get proactive
+			return
+		}
+	}
 }
-
-// TODO: Probably not needed
-// func (s *Server)Serve(l net.Listener) error {
-// 	return nil
-// }
-
-// func (s *Server)SetKeepAlivesEnabled() error {
-// 	return nil
-// }
-
-// More graceful shutdown as Close. Might be useful - see: https://pkg.go.dev/net/http#Server.Shutdown
-// func (s *Server) Shutdown() error {
-// 	return nil
-// }

@@ -69,7 +69,9 @@ func (c *Conn) ListFileMetaData(
 		return ErrExpectedClientConnection
 	}
 
-	c.l.Info("fetching metadata", zap.String("filename", fileName))
+	l := c.l.With(zap.String("filename", fileName))
+
+	l.Info("fetching metadata")
 
 	// create the request
 	metaReq, err := messages.NewMetaReq(fileName)
@@ -82,42 +84,17 @@ func (c *Conn) ListFileMetaData(
 		return fmt.Errorf("unable to encode MetaDataReq: %w", err)
 	}
 
-	// write the encoded message
-	// FIXME: fix len(data) != n
-	_, err = c.conn.Write(data)
-	if err != nil {
-		return fmt.Errorf("unable to write MetaDataReq: %w", err)
-	}
-	//if n != len(data) {
-	//	return io.ErrShortWrite
-	//}
-
-	// wait for a resp
-	inMsg, _, err := c.readMsg()
-	if err != nil {
-		return fmt.Errorf("unable to read incoming message: %w", err)
+	// TODO: maybe introduce a high timeout (~ 10s)
+	// send the data to the sender routing
+	select {
+	case c.outCtrl <- data:
+	case <-c.close:
+		// we're only receiving the channel message, so no need to get proactive
+		c.l.Warn("channel got closed during active MetaDataRequest")
+		return nil
 	}
 
-	switch msg := inMsg.(type) {
-	case *messages.MetaResp:
-		// print output of MetaDataResp
-		output := "MetaDataReq output:\n"
-		for i, item := range msg.Items {
-			output += "MetaDataItem " + strconv.Itoa(i) + ":\n\tFILE NAME: " + item.FileName + "\n"
-			if item.FileSize != nil {
-				output += "\tFILE SIZE: " + strconv.Itoa(int(*item.FileSize)) + "\n"
-			}
-			if item.Checksum != nil {
-				output += "\tCHECKSUM: " + fmt.Sprintf("%x", item.Checksum) + "\n"
-			}
-		}
-		if _, err := fmt.Println(output); err != nil {
-			return fmt.Errorf("unable to write MetaDataResp output to stdout: %w", err)
-		}
-		c.l.Info("got metadata", zap.String("metadata", output))
-	default:
-		return fmt.Errorf("got unexpected message type: %v", msg)
-	}
+	l.Debug("sent MetaDataRequest")
 
 	return nil
 }
@@ -280,6 +257,7 @@ func (c *Conn) handleClientConnection() {
 
 		case *messages.MetaResp:
 			// TODO: handle the packet and display it somehow
+			c.printMetaResponse(msg)
 
 		case *messages.FileReq,
 			*messages.StartTransmission,
@@ -569,4 +547,31 @@ func (c *Conn) handleClientStream(s *stream) {
 			c.CloseStream(s, true, messages.CloseReasonUndefined)
 		}
 	}
+}
+
+func (c *Conn) printMetaResponse(resp *messages.MetaResp) error {
+	// print output of MetaDataResp
+	output := "\n____________________________________\n~ MetaDataResponse:\n"
+	if len(resp.Items) == 0 {
+		output += "~ NO ITEMS FOUND"
+	}
+	for i, item := range resp.Items {
+		output += "~   MetaDataItem " + strconv.Itoa(i) + ":\n"
+		output += "~     FILE NAME: " + item.FileName + "\n"
+		if item.FileSize != nil {
+			output += "~     FILE SIZE: " + strconv.Itoa(int(*item.FileSize)) + "\n"
+		}
+		if item.Checksum != nil {
+			output += "~     CHECKSUM: " + fmt.Sprintf("%x", item.Checksum) + "\n"
+		}
+	}
+	output += "~\n____________________________________\n"
+
+	if c.l.Core().Enabled(zap.InfoLevel) {
+		c.l.Info("got metadata", zap.String("metadata", output))
+	} else {
+		fmt.Println(output)
+	}
+
+	return nil
 }

@@ -15,6 +15,10 @@
     - resumption
     - stress test with A LOT of downloads
 
+## MetaData
+- Do we allow recursive directories on the server?
+
+
 ### Nice to haves
 - add a maximum number of streams per connection/peer
 - support for multiple files with the same name and different revision

@@ -26,26 +26,32 @@ type MetaResp struct {
 
 // NewMetaResp creates a new MetaResp. The number of items will be deeduced from the items. NOTE that the maximum number
 // of items in one resp is limited to 255 and that there might also be responses with 0 items
-func NewMetaResp(items []*MetaItem) (*MetaResp, error) {
-	// TODO: we could also do the splitting of MetaResponses in here and return []*MetaResp
+func NewMetaResps(items []*MetaItem) ([]*MetaResp, error) {
+	resp := make([]*MetaResp, 0, len(items)/MaxMetaItemsNum+1)
 	numItems := len(items)
-	if numItems > 255 {
-		return nil, errors.New("too many items")
-	}
-
 	// determine if resp is extended
 	// a req ist extended if and only if it contains exactly 1 item and that item's checksum and file size are not null
-	var isExtended bool
+	// TODO: we should actually check that not only one of them is set
 	if numItems == 1 && (items[0].FileSize != nil && items[0].Checksum != nil) {
-		isExtended = true
-	} else {
-		isExtended = false
+		return append(resp, &MetaResp{
+			Items:      items,
+			isExtended: true,
+		}), nil
 	}
 
-	return &MetaResp{
+	// split the metaItems into multiple responses
+	for len(items) > MaxMetaItemsNum {
+		resp = append(resp, &MetaResp{
+			Items:      items[:MaxMetaItemsNum],
+			isExtended: false,
+		})
+		items = items[MaxMetaItemsNum:]
+	}
+
+	return append(resp, &MetaResp{
 		Items:      items,
-		isExtended: isExtended,
-	}, nil
+		isExtended: false,
+	}), nil
 }
 
 func (m *MetaResp) baseSize() int {
