@@ -137,8 +137,11 @@ func (c *Conn) sendClosePacket(s messages.StreamID, r messages.CloseReason) {
 
 	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
+	// NOTE: Since the Close packet is also used to signalize that a download
+	// has been completed, it cannot be sent on the Ctrl channel. Otherwise, the
+	// close packet would arrive before the remaining Data packets
 	select {
-	case c.outCtrl <- data:
+	case c.outData <- data:
 	case <-c.close:
 		c.l.Info("closing connection - canceling sending close packet")
 		return

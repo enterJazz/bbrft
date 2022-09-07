@@ -70,6 +70,36 @@ func TestTransfer(t *testing.T) {
 	}
 }
 
+func TestMultiTransfer(t *testing.T) {
+	testFiles := []string{"test-1.jpg", "test-2.jpg", "test-3.jpg", "test-4.jpg"}
+
+	c := setupTest(t)
+	removeTestFiles(t, testFiles...)
+	err := c.DownloadFiles(testFiles)
+	if err != nil {
+		t.Error(err)
+	}
+
+	for {
+		time.Sleep(time.Nanosecond * 100)
+	}
+}
+
+func TestNonExistingFile(t *testing.T) {
+	testFiles := []string{"not.existing"}
+
+	c := setupTest(t)
+	removeTestFiles(t, testFiles...)
+	err := c.DownloadFiles(testFiles)
+	if err != nil {
+		t.Error(err)
+	}
+
+	for {
+		time.Sleep(time.Nanosecond * 100)
+	}
+}
+
 func TestMetaData(t *testing.T) {
 	testFile := "test-1.jpg"
 
