@@ -43,7 +43,7 @@ var messageTypesString = map[MessageType]string{
 	MessageTypeMetaDataResp:      "Metadata Response",
 }
 
-func (mt MessageType) String() string {
+func (mt MessageType) Name() string {
 	return messageTypesString[mt]
 }
 

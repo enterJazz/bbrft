@@ -49,7 +49,7 @@ func (m *FileResp) baseSize() int {
 	return 1 + 2 + 8 + common.ChecksumSize
 }
 
-func (m *FileResp) String() string {
+func (m *FileResp) Name() string {
 	return "FileResp"
 }
 

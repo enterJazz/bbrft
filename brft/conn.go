@@ -3,6 +3,7 @@ package brft
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	"gitlab.lrz.de/bbrft/brft/messages"
@@ -22,58 +23,47 @@ type Conn struct {
 	// directory where the client downloads to
 	basePath string
 
-	streams      map[messages.StreamID]*stream
-	streamsMu    sync.RWMutex
-	streamsWg    *sync.WaitGroup
-	streamsClose chan struct{}
-
-	// synchronization between routines
-	wg    *sync.WaitGroup
-	close chan struct{}
+	streams   map[messages.StreamID]*stream
+	streamsMu sync.RWMutex
+	wg        *sync.WaitGroup
+	close     chan struct{}
 
 	// buffers for sending data
 	outCtrl chan []byte
 	outData chan []byte
 
+	// TODO: make sure the options are used
 	options ConnOptions
-}
-
-// CloseStream will send a close message to the other peer indicating that the
-// stream should be closed. It also tries to remove the stream from conn.streams.
-// HOWEVER, it does not remove any streams from conn.reqStreams
-func (c *Conn) CloseStream(
-	sid *messages.StreamID,
-	r messages.CloseReason,
-) { // no need to return an error since we want to close it either way
-	// TODO: Send the close message
-
-	if sid != nil {
-		c.streamsMu.Lock()
-		if _, ok := c.streams[*sid]; !ok {
-			c.l.Warn("stream not found in streams",
-				zap.String("streams", spew.Sdump("\n", c.streams)),
-				zap.Uint16("stream_id", uint16(*sid)),
-			)
-		} else {
-			delete(c.streams, *sid)
-			c.l.Warn("deleted stream not found in streams",
-				zap.Uint16("stream_id", uint16(*sid)),
-			)
-		}
-		c.streamsMu.Unlock()
-	}
-
-	// TODO: Should the whole connection be closed if this is the only stream?!
 }
 
 // Close sends close messages to all the (remaining) streams and closes the
 // btp.Conn.
 func (c *Conn) Close() error {
-	// TODO: Close all the (remaining) streams
+	defer c.l.Info("closed connection")
+
+	c.l.Debug("closing connection")
+	// close the close channel without closing it multiple times. This signals
+	// to all streams of this connection to shutdown
+	select {
+	case <-c.close:
+		// channel is closed, this is executed
+	default:
+		// channel is still open, the previous case is not executed
+		close(c.close)
+	}
 
 	// wait for the streams
+	c.l.Debug("waiting for streams...")
 	c.wg.Wait()
+	c.l.Debug("all streams shut down")
 
+	// clean up data of the Conn struct
+	close(c.outCtrl)
+	close(c.outData)
+
+	c.l.Debug("closing btp connection")
+	// TODO: It could be that we try to close the connection after it has
+	// 		already been closed (and returned an error on Read/Write)
 	// close the btp.Conn
 	return c.conn.Close()
 }
@@ -82,19 +72,27 @@ func (c *Conn) sendMessages(
 	outCtrl chan []byte,
 	outData chan []byte,
 ) {
+	c.wg.Add(1)
+	defer c.wg.Done()
+	defer c.l.Info("stop sending messages")
 
 loop:
 	for {
+		time.Sleep(time.Nanosecond * 100) // TODO: Adjust
 		select {
 		case msg := <-outCtrl:
 			_, err := c.conn.Write(msg)
 			if err != nil {
 				// actually close the whole connection
-				c.l.Error("unable to write data", zap.Error(err))
-				close(c.close)
+				c.l.Error("unable to write data - closing connection",
+					zap.Error(err),
+				)
+				c.Close()
 				return
 			}
 			goto loop
+		case <-c.close:
+			return
 		default:
 		}
 
@@ -103,12 +101,47 @@ loop:
 			_, err := c.conn.Write(msg)
 			if err != nil {
 				// actually close the whole connection
-				c.l.Error("unable to write data", zap.Error(err))
-				close(c.close)
+				c.l.Error("unable to write data - closing connection",
+					zap.Error(err),
+				)
+				c.Close()
 				return
 			}
+		case <-c.close:
+			return
 		default:
 		}
+	}
+}
+
+func (c *Conn) sendClosePacket(s messages.StreamID, r messages.CloseReason) {
+	cl := &messages.Close{
+		StreamID: s,
+		Reason:   r,
+	}
+
+	data, err := cl.Encode(c.l)
+	if err != nil {
+		c.l.Error("unable to encode FileResponse",
+			zap.String("packet", spew.Sdump("\n", cl)),
+			zap.Error(err),
+		)
+
+		// we're already trying to close the stream, nothing else to do here
+		c.l.Error("unable to send Close packet",
+			zap.String("stream_id", s.String()),
+			zap.Error(err),
+		)
+		return
+	}
+
+	// TODO: maybe introduce a high timeout (~ 10s)
+	// send the data to the sender routing
+	select {
+	case c.outCtrl <- data:
+	case <-c.close:
+		c.l.Info("closing connection - canceling sending close packet")
+		return
 	}
 }
 
@@ -118,11 +151,6 @@ func (c *Conn) readHeader() (messages.PacketHeader, error) {
 	_, err := c.conn.Read(b)
 	if err != nil {
 		c.l.Error("unable to read message header - closing", zap.Error(err))
-		errClose := c.Close()
-		if errClose != nil {
-			c.l.Error("unable to close connection", zap.Error(errClose))
-			return messages.PacketHeader{}, errClose
-		}
 
 		return messages.PacketHeader{}, err
 	}
@@ -135,11 +163,6 @@ func (c *Conn) readHeader() (messages.PacketHeader, error) {
 			zap.Uint8("version", uint8(h.Version)),
 			zap.Uint8("type", uint8(h.MessageType)),
 		)
-		errClose := c.Close()
-		if errClose != nil {
-			c.l.Error("unable to close connection", zap.Error(errClose))
-			return messages.PacketHeader{}, errClose
-		}
 	}
 
 	return h, nil
@@ -160,8 +183,6 @@ func (c *Conn) readMsg() (msg messages.BRFTMessage, h messages.PacketHeader, err
 	case messages.MessageTypeData:
 		msg = new(messages.Data)
 	case messages.MessageTypeStartTransmission:
-		// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
-		// decode the packet
 		msg = new(messages.StartTransmission)
 	case messages.MessageTypeClose:
 		msg = new(messages.Close)
@@ -174,9 +195,11 @@ func (c *Conn) readMsg() (msg messages.BRFTMessage, h messages.PacketHeader, err
 		return
 	}
 
+	// actually decode the packet
+	// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
 	err = msg.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
 	if err != nil {
-		err = fmt.Errorf("unable to decode StartTransmission: %w", err)
+		err = fmt.Errorf("unable to decode %s: %w", msg.Name(), err)
 		return
 	}
 

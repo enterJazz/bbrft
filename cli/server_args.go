@@ -1,8 +1,8 @@
 package cli
 
 type ServerArgs struct {
-	serveDir string // path to directory of files served by server
-	port     int    // port which the server binds to on localhost
+	ServeDir string // path to directory of files served by server
+	Port     int    // port which the server binds to on localhost
 }
 
 func (*ServerArgs) GetOperationMode() OperationMode {

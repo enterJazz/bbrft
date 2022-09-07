@@ -36,6 +36,8 @@ func WithProd(v bool) Option {
 	}
 }
 
+// TODO: Add option for log level
+
 func NewLogger(opts ...Option) (*zap.Logger, error) {
 	o := NewOptions()
 	for _, opt := range opts {

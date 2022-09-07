@@ -21,7 +21,7 @@ func (m *StartTransmission) baseSize() int {
 	return 2 + common.ChecksumSize + 8
 }
 
-func (m *StartTransmission) String() string {
+func (m *StartTransmission) Name() string {
 	return "StartTransmission"
 }
 

@@ -178,33 +178,38 @@ func (f *File) Checksum() []byte {
 	return f.checksum
 }
 
-// TODO: see if actually needed
-// TODO: comment
+// TODO: Maybe combine with StripChecksum
+// CheckChecksum computes the checksum over the actual file content (i.e.
+// without signature and checksum). It then compares the computed checksum with
+// the previously advertised checksum set in f.checksum. If possible, the
+// function will return the computed checksum as second return parameter for
+// logging purposes.
 // This is only possible on client files.
-func (f *File) CheckChecksum([]byte) (bool, error) {
+func (f *File) CheckChecksum() (bool, []byte, error) {
 	if !f.isClientFile {
-		return false, ErrNoClientFile
+		return false, nil, ErrNoClientFile
 	}
 
 	prevOffset, err := f.f.Seek(0, io.SeekCurrent)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	// reset the offset at the end
 	defer f.f.Seek(prevOffset, io.SeekStart)
 
-	offset := int64(len(fileSignature) + common.ChecksumSize - 1)
+	// set the fd to the beginning of the actual content
+	offset := int64(len(fileSignature) + common.ChecksumSize)
 	_, err = f.f.Seek(offset, io.SeekStart)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	if checksum, err := common.ComputeChecksum(f.f); err != nil {
-		return false, err
+		return false, checksum, err
 	} else if !bytes.Equal(checksum, f.checksum) {
-		return false, nil
+		return false, checksum, nil
 	} else {
-		return true, nil
+		return true, checksum, nil
 	}
 }
 
@@ -227,19 +232,23 @@ func (f *File) StripChecksum() error {
 		return err
 	}
 
+	// TODO: FIXME:
 	// write the remainder of the file to a temporary file
-	tmpFile, err := os.CreateTemp("", "*.brft")
+	tmpFile, err := os.CreateTemp("../test/downloads/", "*.brft")
 	if err != nil {
 		return err
 	}
+	defer tmpFile.Close()
 
 	_, err = io.Copy(tmpFile, f.f)
 	if err != nil {
 		return err
 	}
 
-	tmpFile.Close()
-	f.f.Close()
+	err = os.Rename(tmpFile.Name(), f.f.Name())
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -255,8 +264,7 @@ func readChecksum(f *os.File) ([]byte, error) {
 		return nil, ErrNotABRFTFile
 	}
 
-	// TODO: Maybe make lenght delimeted
-	checksum := make([]byte, shared.ChecksumSize)
+	checksum := make([]byte, common.ChecksumSize)
 	if n, err := f.Read(checksum); err != nil {
 		return nil, err
 	} else if n != len(checksum) {
