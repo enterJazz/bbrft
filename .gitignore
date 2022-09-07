@@ -30,3 +30,7 @@ go.work
 
 ### GoLand ###
 .idea/
+
+### ignore common big file formats
+*.mp4
+*.mkv

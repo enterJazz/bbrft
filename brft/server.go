@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -157,6 +158,7 @@ func (c *Conn) handleServerConnection() {
 					zap.String("file_name", msg.FileName),
 				),
 				id:        msg.StreamID,
+				progress:  make(chan float32),
 				chunkSize: messages.ComputeChunkSize(c.options.chunkSizeFactor),
 				in:        make(chan messages.BRFTMessage, 50),
 			}
@@ -310,7 +312,8 @@ func (c *Conn) handleServerStream(s *stream) {
 	}
 	s.fileName = req.FileName
 	s.requestedChecksum = req.Checksum
-	resp.FileSize = s.f.Size()
+	s.totalSize = s.f.Size()
+	resp.FileSize = s.totalSize
 	resp.Checksum = s.f.Checksum()
 
 	// handle resumption
@@ -512,6 +515,7 @@ func (c *Conn) handleServerStream(s *stream) {
 			lastPacket = true
 			d.Data = d.Data[:n]
 		}
+		dLen := n
 
 		// (optionally) compress the data
 		if s.comp != nil {
@@ -552,6 +556,34 @@ func (c *Conn) handleServerStream(s *stream) {
 		case <-c.close:
 			c.CloseStream(s, false, 0)
 			return
+		}
+
+		// TODO: Somehow we send more data than we initially advertised
+		s.totalTransmitted += uint64(dLen)
+		if s.totalTransmitted > s.totalSize {
+			s.l.Error("already sent more data than advertised",
+				zap.Uint64("len_advertised", s.totalSize),
+				zap.Uint64("len_sent", s.totalTransmitted),
+			)
+			// TODO: should we close the stream?
+		}
+
+		// TODO: Actually this is not really needed on the server. Or we'd have
+		//		to create a special function to retrieve the channel
+		// try to send the current progress
+		prog := float32(math.Min(1.0, (float64(s.totalTransmitted) / float64(s.totalSize))))
+		select {
+		case s.progress <- prog:
+		default:
+			// try to read the first value and append the new one
+			select {
+			case <-s.progress:
+			default:
+				select {
+				case s.progress <- prog:
+				default:
+				}
+			}
 		}
 
 		if lastPacket {
