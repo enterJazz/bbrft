@@ -12,6 +12,15 @@ import (
 	"go.uber.org/zap"
 )
 
+type metaDataReqRespMsg struct {
+	resp messages.MetaResp
+	err  error
+}
+
+type metaDataRequestRef struct {
+	resp_chan chan metaDataReqRespMsg
+}
+
 type Conn struct {
 	l *zap.Logger
 
@@ -27,6 +36,11 @@ type Conn struct {
 	streamsMu sync.RWMutex
 	wg        *sync.WaitGroup
 	close     chan struct{}
+
+	// metadata request storage, used to correctly correlate incoming metadata requests with
+	// incoming responses
+	metaDataRequestMu sync.Mutex
+	metaDataRequests  []metaDataRequestRef
 
 	// buffers for sending data
 	outCtrl chan []byte

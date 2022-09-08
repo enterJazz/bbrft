@@ -31,7 +31,7 @@ type ConnOptions struct {
 
 func NewDefaultOptions(l *zap.Logger) *ConnOptions {
 	initCwndSize := 1
-	maxCwndSize := 10
+	maxCwndSize := 25
 
 	return &ConnOptions{
 		Network: "udp",
@@ -40,8 +40,8 @@ func NewDefaultOptions(l *zap.Logger) *ConnOptions {
 		MaxPacketSize: 1024,
 
 		// will be reset when establishing a connection
-		InitCwndSize: 1,
-		MaxCwndSize:  10,
+		InitCwndSize: uint8(initCwndSize),
+		MaxCwndSize:  uint8(maxCwndSize),
 		CC:           congestioncontrol.NewElasticTcpAlgorithm(l, initCwndSize, maxCwndSize),
 
 		ReadBufferCap: 2048,
