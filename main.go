@@ -35,8 +35,10 @@ func runClient(args *cli.Args) {
 
 	switch cArgs.Command {
 	case cli.FileRequest:
-		if err := c.DownloadFile(cArgs.FileName); err != nil {
+		if prog, err := c.DownloadFile(cArgs.FileName); err != nil {
 			args.L.Fatal("failed to download file", zap.Error(err))
+		} else {
+			brft.LogProgress(args.L, cArgs.FileName, prog)
 		}
 	case cli.MetaDataRequest:
 		if err := c.ListFileMetaData(cArgs.FileName); err != nil {

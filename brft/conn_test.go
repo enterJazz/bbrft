@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path"
-	"sync"
 	"testing"
 	"time"
 
@@ -14,20 +13,19 @@ import (
 )
 
 const (
-	serverDir        string  = "../test/server"
-	clientDir        string  = "../test/downloads"
-	minProgressDelta float32 = 0.05
+	serverDir string = "../test/server"
+	clientDir string = "../test/downloads"
 )
 
 func setupTest(t *testing.T,
 	brftOpts []log.Option,
 	btpOpts []log.Option,
-) (*zap.Logger, *Conn) {
-	ld, _ := log.NewLogger(brftOpts...)
-	lp, err := log.NewLogger(btpOpts...)
+) (*zap.Logger, *Conn, func()) {
+	l, _ := log.NewLogger(brftOpts...)
+	lBtp, err := log.NewLogger(btpOpts...)
 
-	opt := &ServerOptions{NewDefaultOptions(lp)}
-	s, laddr, err := NewServer(ld, "127.0.0.1:1337", serverDir, opt)
+	opt := &ServerOptions{NewDefaultOptions(lBtp)}
+	s, laddr, err := NewServer(l, "127.0.0.1:1337", serverDir, opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,13 +39,27 @@ func setupTest(t *testing.T,
 	}()
 
 	t.Log(laddr.String())
-	optD := NewDefaultOptions(lp)
+	optD := NewDefaultOptions(lBtp)
 	optD.chunkSizeFactor = 63 // 4MB
-	c, err := Dial(ld, laddr.String(), clientDir, &optD)
+	c, err := Dial(l, laddr.String(), clientDir, &optD)
 	if err != nil {
+		errS := s.Close()
+		if errS != nil {
+			l.Error("unable to close server", zap.Error(errS))
+		}
 		t.Error(err)
 	}
-	return ld, c
+
+	return l, c, func() {
+		err := s.Close()
+		if err != nil {
+			l.Error("unable to close server", zap.Error(err))
+		}
+		err = c.Close()
+		if err != nil {
+			l.Error("unable to close client", zap.Error(err))
+		}
+	}
 }
 
 func removeTestFiles(t *testing.T, testFiles ...string) {
@@ -64,109 +76,66 @@ func removeTestFiles(t *testing.T, testFiles ...string) {
 	}
 }
 
-func logProgress(l *zap.Logger, filename string, ch <-chan float32) {
-	logMultipleProgresses(l, map[string]<-chan float32{filename: ch})
-}
-
-func logMultipleProgresses(l *zap.Logger, chs map[string]<-chan float32) {
-	wg := sync.WaitGroup{}
-	for filename, ch := range chs {
-		filename, ch := filename, ch // https://golang.org/doc/faq#closures_and_goroutines
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			var prevProgress float32 = 0.0
-			for {
-				if prog, ok := <-ch; ok {
-					//if prog > prevProgress {
-					if prog > prevProgress+minProgressDelta {
-						l.Info("current progress", zap.String("file_name", filename), zap.Float32("progress", prog))
-						prevProgress = prog
-					}
-				} else {
-					return
-				}
-			}
-		}()
-	}
-
-	wg.Wait()
-}
-
-func consumeProgress(chs ...<-chan float32) {
-	wg := sync.WaitGroup{}
-	for _, ch := range chs {
-		wg.Add(1)
-		ch := ch // https://golang.org/doc/faq#closures_and_goroutines
-		go func() {
-			defer wg.Done()
-			for {
-				if _, ok := <-ch; !ok {
-					return
-				}
-			}
-		}()
-	}
-
-	wg.Wait()
-}
-
 func TestTransfer(t *testing.T) {
 	testFile := "test-1.jpg"
 
-	l, c := setupTest(t,
+	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(true)}, // TODO: Re-vert
 		[]log.Option{log.WithProd(true)},
 	)
+	defer close()
 	removeTestFiles(t, testFile)
 	prog, err := c.DownloadFile(testFile)
 	if err != nil {
 		t.Error(err)
 	}
 
-	logProgress(l, testFile, prog)
+	LogProgress(l, testFile, prog)
 }
 
 // TODO: Create separate tests for different chunk sizes
 func TestBigTransfer(t *testing.T) {
 	testFile := "video-1.mkv"
 
-	l, c := setupTest(t,
+	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(true)},
 		[]log.Option{log.WithProd(true)},
 	)
+	defer close()
 	removeTestFiles(t, testFile)
 	prog, err := c.DownloadFile(testFile)
 	if err != nil {
 		t.Error(err)
 	}
 
-	logProgress(l, testFile, prog)
+	LogProgress(l, testFile, prog)
 }
 
 func TestMultiTransfer(t *testing.T) {
 	testFiles := []string{"test-1.jpg", "test-2.jpg", "test-3.jpg", "test-4.jpg"}
 
-	l, c := setupTest(t,
+	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(false)},
 		[]log.Option{log.WithProd(true)},
 	)
+	defer close()
 	removeTestFiles(t, testFiles...)
 	progs, err := c.DownloadFiles(testFiles)
 	if err != nil {
 		t.Error(err)
 	}
 
-	logMultipleProgresses(l, progs)
+	LogMultipleProgresses(l, progs)
 }
 
 func TestConcurrentDownloadAndMetaDataRequest(t *testing.T) {
 	testFiles := []string{"test-1.jpg", "test-2.jpg", "test-3.jpg", "test-4.jpg"}
 
-	l, c := setupTest(t,
+	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(false)},
 		[]log.Option{log.WithProd(true)},
 	)
+	defer close()
 	removeTestFiles(t, testFiles...)
 
 	// Download the files
@@ -195,32 +164,34 @@ func TestConcurrentDownloadAndMetaDataRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	logMultipleProgresses(l, progs)
+	LogMultipleProgresses(l, progs)
 }
 
 func TestNonExistingFile(t *testing.T) {
 	testFile := "not.existing"
 
-	l, c := setupTest(t,
+	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(false)},
 		[]log.Option{log.WithProd(true)},
 	)
+	defer close()
 	removeTestFiles(t, testFile)
 	prog, err := c.DownloadFile(testFile)
 	if err != nil {
 		t.Error(err)
 	}
 
-	logProgress(l, testFile, prog)
+	LogProgress(l, testFile, prog)
 }
 
 func TestMetaData(t *testing.T) {
 	testFile := "test-1.jpg"
 
-	_, c := setupTest(t,
+	_, c, close := setupTest(t,
 		[]log.Option{log.WithProd(false)},
 		[]log.Option{log.WithProd(true)},
 	)
+	defer close()
 	if err := c.ListFileMetaData(""); err != nil {
 		t.Error(err)
 	}

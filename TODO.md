@@ -3,7 +3,6 @@
 - go over the feedback of the prof
 
 ## BRFT
-- create some kind of callBack/channel that allows to signal the completion of the download (michi)
 - Server must honor the offset set if it is a retransmit 
 - graceful shutdown of connections (michi)
 
