@@ -100,7 +100,13 @@ func (ls *Listener) createConnResp(conn *net.UDPConn, req *messages.Conn) (resp 
 // dialMigrateConn creates a new UDP connection with the next free port on the host machine
 // remote client address is maintained in the new connection
 func (ls *Listener) dialMigratedConn(addr *net.UDPAddr) (c *Conn, err error) {
-	conn, err := net.DialUDP(ls.options.Network, nil, addr)
+	// queue next free port on same IP address as listener
+	laddr, err := net.ResolveUDPAddr(ls.options.Network, ls.laddr.IP.String()+":0")
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := net.DialUDP(ls.options.Network, laddr, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +156,10 @@ func (ls *Listener) doServerHandshake() (c *Conn, err error) {
 	}
 
 	// start run loop
-	c.start()
+	err = c.start()
+	if err != nil {
+		return nil, err
+	}
 
 	l.Debug("waiting for client response")
 	openErr := <-c.openChan

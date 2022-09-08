@@ -16,12 +16,15 @@ const (
 	OptionalHeaderTypeReserved OptionalHeaderType = iota
 	OptionalHeaderTypeCompressionReq
 	OptionalHeaderTypeCompressionResp
+
+	OptionalHeaderLengthCompressionReq  uint8 = 3 // length without length field
+	OptionalHeaderLengthCompressionResp uint8 = 2 // length without length field
 )
 
 type OptionalHeader interface {
-	// TODO: maybe rename Marshal function
-	Marshal() ([]byte, error)                         // i.e. Marshal & Write
-	Read(*cyberbyte.String, BaseOptionalHeader) error // i.e. Read & Unmarshal
+	Encode() ([]byte, error) // i.e. Marshal & Write
+	// Decode actually reads the bytes from the *cyberbyte.String and decodes them
+	Decode(*cyberbyte.String, BaseOptionalHeader) error // i.e. Read & Unmarshal
 }
 
 type OptionalHeaders []OptionalHeader
@@ -36,7 +39,7 @@ type BaseOptionalHeader struct {
 }
 
 // TODO: Rename to InitBuilder
-func (h *BaseOptionalHeader) Marshal() (*cryptobyte.Builder, error) {
+func (h *BaseOptionalHeader) Encode() (*cryptobyte.Builder, error) {
 	if h == nil {
 		return nil, ErrOptionalHeaderNil
 	}
@@ -49,7 +52,7 @@ func (h *BaseOptionalHeader) Marshal() (*cryptobyte.Builder, error) {
 	return b, nil
 }
 
-func (h *BaseOptionalHeader) Read(s *cyberbyte.String) error {
+func (h *BaseOptionalHeader) Decode(s *cyberbyte.String) error {
 	if h == nil {
 		return ErrOptionalHeaderNil
 	}
@@ -78,12 +81,12 @@ type UnknownOptionalHeader struct {
 	Data []byte
 }
 
-func (h *UnknownOptionalHeader) Marshal() ([]byte, error) {
+func (h *UnknownOptionalHeader) Encode() ([]byte, error) {
 	if h == nil {
 		return nil, ErrOptionalHeaderNil
 	}
 
-	b, err := h.BaseOptionalHeader.Marshal()
+	b, err := h.BaseOptionalHeader.Encode()
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +98,7 @@ func (h *UnknownOptionalHeader) Marshal() ([]byte, error) {
 	return b.Bytes()
 }
 
-func (h *UnknownOptionalHeader) Read(s *cyberbyte.String, base BaseOptionalHeader) error {
+func (h *UnknownOptionalHeader) Decode(s *cyberbyte.String, base BaseOptionalHeader) error {
 	if h == nil {
 		return ErrOptionalHeaderNil
 	}
@@ -127,12 +130,26 @@ type CompressionReqOptionalHeader struct {
 	ChunkSizeMultiplier uint8
 }
 
-func (h *CompressionReqOptionalHeader) Marshal() ([]byte, error) {
+func NewCompressionReqOptionalHeader(
+	a CompressionReqHeaderAlgorithm,
+	m uint8,
+) *CompressionReqOptionalHeader {
+	return &CompressionReqOptionalHeader{
+		BaseOptionalHeader: BaseOptionalHeader{
+			Length: OptionalHeaderLengthCompressionReq,
+			Type:   OptionalHeaderTypeCompressionReq,
+		},
+		Algorithm:           a,
+		ChunkSizeMultiplier: m,
+	}
+}
+
+func (h *CompressionReqOptionalHeader) Encode() ([]byte, error) {
 	if h == nil {
 		return nil, ErrOptionalHeaderNil
 	}
 
-	b, err := h.BaseOptionalHeader.Marshal()
+	b, err := h.BaseOptionalHeader.Encode()
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +161,7 @@ func (h *CompressionReqOptionalHeader) Marshal() ([]byte, error) {
 	return b.Bytes()
 }
 
-func (h *CompressionReqOptionalHeader) Read(
+func (h *CompressionReqOptionalHeader) Decode(
 	s *cyberbyte.String,
 	base BaseOptionalHeader,
 ) error {
@@ -170,6 +187,21 @@ func (h *CompressionReqOptionalHeader) Read(
 	return nil
 }
 
+// ChunkSize returns the requested chunk size according to the chunk size
+// multiplier. Ther formula is:
+// chunk_size = (chunk_size_multiplier + 1) ∗ 64kB
+func (h *CompressionReqOptionalHeader) ChunkSize() int {
+	if h == nil {
+		return 0
+	}
+	return ComputeChunkSize(h.ChunkSizeMultiplier)
+}
+
+// TODO: move
+func ComputeChunkSize(mult uint8) int {
+	return (int(mult) + 1) * 64 * 1024
+}
+
 type CompressionRespHeaderStatus uint8
 
 const (
@@ -185,12 +217,24 @@ type CompressionRespOptionalHeader struct {
 	Status CompressionRespHeaderStatus
 }
 
-func (h *CompressionRespOptionalHeader) Marshal() ([]byte, error) {
+func NewCompressionRespOptionalHeader(
+	s CompressionRespHeaderStatus,
+) *CompressionRespOptionalHeader {
+	return &CompressionRespOptionalHeader{
+		BaseOptionalHeader: BaseOptionalHeader{
+			Length: OptionalHeaderLengthCompressionResp,
+			Type:   OptionalHeaderTypeCompressionResp,
+		},
+		Status: s,
+	}
+}
+
+func (h *CompressionRespOptionalHeader) Encode() ([]byte, error) {
 	if h == nil {
 		return nil, ErrOptionalHeaderNil
 	}
 
-	b, err := h.BaseOptionalHeader.Marshal()
+	b, err := h.BaseOptionalHeader.Encode()
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +245,7 @@ func (h *CompressionRespOptionalHeader) Marshal() ([]byte, error) {
 	return b.Bytes()
 }
 
-func (h *CompressionRespOptionalHeader) Read(
+func (h *CompressionRespOptionalHeader) Decode(
 	s *cyberbyte.String,
 	base BaseOptionalHeader,
 ) error {
@@ -235,7 +279,7 @@ func marshalOptionalHeaders(hs OptionalHeaders) ([]byte, error) {
 
 	// marshal the individual headers
 	for _, h := range hs {
-		hb, err := h.Marshal()
+		hb, err := h.Encode()
 		if err != nil {
 			return nil, err
 		}
@@ -257,7 +301,10 @@ func readOptionalHeaders(l *zap.Logger, s *cyberbyte.String) (OptionalHeaders, e
 	for n := 0; n < int(numHeaders); n++ {
 
 		base := new(BaseOptionalHeader)
-		base.Read(s)
+		err := base.Decode(s)
+		if err != nil {
+			return nil, err
+		}
 
 		// check whether the type is known
 		var h OptionalHeader
@@ -269,22 +316,17 @@ func readOptionalHeaders(l *zap.Logger, s *cyberbyte.String) (OptionalHeaders, e
 			return nil, ErrReceivedReservedOptionalHeader
 
 		case OptionalHeaderTypeCompressionReq:
-			// simply parse the header
+			// parse the header
 			h = new(CompressionReqOptionalHeader)
-			err := h.Read(s, *base)
+			err := h.Decode(s, *base)
 			if err != nil {
 				return nil, err
 			}
 
 		case OptionalHeaderTypeCompressionResp:
-
-			l.Warn("received reserved optional header",
-				FOptionalHeaderType(base.Type),
-			)
-
-			// parse the header nonetheless and let the caller handle the actual logic TODO: caller check
+			// parse the header
 			h = new(CompressionRespOptionalHeader)
-			err := h.Read(s, *base)
+			err := h.Decode(s, *base)
 			if err != nil {
 				return nil, err
 			}
@@ -297,7 +339,7 @@ func readOptionalHeaders(l *zap.Logger, s *cyberbyte.String) (OptionalHeaders, e
 
 			// add an unknown optional header
 			h = new(UnknownOptionalHeader)
-			err := h.Read(s, *base)
+			err := h.Decode(s, *base)
 			if err != nil {
 				return nil, err
 			}

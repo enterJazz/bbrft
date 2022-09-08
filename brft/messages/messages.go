@@ -1,45 +1,33 @@
 package messages
 
 import (
+	"strconv"
+
 	"gitlab.lrz.de/bbrft/cyberbyte"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/cryptobyte"
 )
 
+const (
+	BRFTHeaderSize = 1
+)
+
 type BRFTMessage interface {
-	Marshal(l *zap.Logger) ([]byte, error)
-	Read(l *zap.Logger, s *cyberbyte.String) error
+	Encode(l *zap.Logger) ([]byte, error)
+	// Decode actually reads the bytes from the *cyberbyte.String and decodes them
+	Decode(l *zap.Logger, s *cyberbyte.String) error
+
+	// base size of the message without header but with all non variable length or optional fields
+	baseSize() int
+
+	// get string representation of packet
+	Name() string
 }
 
-// ProcolType defines the protocol type of the packet
-type ProtocolType uint8
+type StreamID uint16
 
-const (
-	ProtocolTypeBRFTv0 ProtocolType = (iota + 1) << 5 // 0010 0000
-	ProtocolTypeBRFTv1                                // 0100 0000
-	// 0110 0000 ...
-
-	ProtocolTypeMask ProtocolType = 0b11100000
-)
-
-// MessageType defines the type of message within the given protocol
-type MessageType uint8
-
-const (
-	MessageTypeFileReq MessageType = iota + 1
-	MessageTypeFileResp
-	MessageTypeData
-	MessageTypeStartTransmission
-	MessageTypeStopTransmission
-	MessageTypeMetaDataReq
-	MessageTypeMetaDataResp
-
-	MessageTypeMask MessageType = 0b00011111
-)
-
-type PacketHeader struct {
-	ProtocolType ProtocolType
-	MessageType  MessageType
+func (s StreamID) String() string {
+	return strconv.Itoa(int(s))
 }
 
 // TODO: Maybe also create a cyberbyte.Builder
@@ -59,4 +47,16 @@ func ReadUint64(s *cryptobyte.String, out *uint64) bool {
 	*out = uint64(v[0])<<56 | uint64(v[1])<<48 | uint64(v[2])<<40 | uint64(v[3])<<32 |
 		uint64(v[4])<<24 | uint64(v[5])<<16 | uint64(v[6])<<8 | uint64(v[7])
 	return true
+}
+
+func NewFixedBRFTMessageBuilder(m BRFTMessage) *cryptobyte.Builder {
+	b := cryptobyte.NewFixedBuilder(make([]byte, 0, BRFTHeaderSize+m.baseSize()))
+	writePacketHeader(m, b)
+	return b
+}
+
+func NewFixedBRFTMessageBuilderWithExtra(m BRFTMessage, extra int) *cryptobyte.Builder {
+	b := cryptobyte.NewFixedBuilder(make([]byte, 0, BRFTHeaderSize+m.baseSize()+extra))
+	writePacketHeader(m, b)
+	return b
 }

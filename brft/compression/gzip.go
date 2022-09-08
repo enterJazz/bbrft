@@ -8,15 +8,17 @@ import (
 	"go.uber.org/zap"
 )
 
+const minFileSize uint64 = 65536
+
 type GzipCompressor struct {
 	l *zap.Logger
 }
 
 func NewGzipCompressor(
 	l *zap.Logger,
-) *GzipCompressor {
+) Compressor {
 	return &GzipCompressor{
-		l: l,
+		l: l, // TODO: Extend logger
 	}
 }
 
@@ -55,4 +57,8 @@ func (c *GzipCompressor) Decompress(chunk []byte) ([]byte, error) {
 	}
 
 	return buf.Bytes(), err
+}
+
+func (c *GzipCompressor) MinFileSize() uint64 {
+	return minFileSize
 }

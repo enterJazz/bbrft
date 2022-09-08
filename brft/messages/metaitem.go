@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"gitlab.lrz.de/bbrft/brft/common"
+	"gitlab.lrz.de/bbrft/cyberbyte"
 	"golang.org/x/crypto/cryptobyte"
 )
 
@@ -32,7 +33,7 @@ func NewMetaItem(
 	}, nil
 }
 
-func (m *MetaItem) Marshal() ([]byte, error) {
+func (m *MetaItem) Encode() ([]byte, error) {
 	fileName := []byte(m.FileName)
 	if len(fileName) > 255 {
 		return nil, errors.New("filename too long")
@@ -75,16 +76,14 @@ func (m *MetaItem) Marshal() ([]byte, error) {
 	return b.Bytes()
 }
 
-func (m *MetaItem) Unmarshal(data []byte, extended bool) error {
-	s := cryptobyte.String(data)
-
-	return m.UnmarshalWithString(&s, extended)
+func (m *MetaItem) Decode(s *cyberbyte.String, extended bool) error {
+	return m.UnmarshalWithString(s, extended)
 }
 
-func (m *MetaItem) UnmarshalWithString(s *cryptobyte.String, extended bool) error {
+func (m *MetaItem) UnmarshalWithString(s *cyberbyte.String, extended bool) error {
 	// read the filename
-	var fileName cryptobyte.String
-	if !s.ReadUint8LengthPrefixed(&fileName) {
+	var fileName []byte
+	if err := s.ReadUint8LengthPrefixedBytes(&fileName); err != nil {
 		return ErrReadFailed
 	}
 	m.FileName = string(fileName)
@@ -95,15 +94,15 @@ func (m *MetaItem) UnmarshalWithString(s *cryptobyte.String, extended bool) erro
 		return nil
 	}
 
+	var fileSize uint64
 	// try to read the file size
-	var size uint64
-	if !ReadUint64(s, &size) {
+	if err := s.ReadUint64(&fileSize); err != nil {
 		return errors.New("extended item, but unable to read file size")
 	}
-	m.FileSize = &size
+	m.FileSize = &fileSize
 
 	checksum := make([]byte, 0, common.ChecksumSize)
-	if !s.ReadBytes(&checksum, common.ChecksumSize) {
+	if err := s.ReadBytes(&checksum, common.ChecksumSize); err != nil {
 		return errors.New("extended item, but unable to read checksum")
 	}
 	m.Checksum = checksum

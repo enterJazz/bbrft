@@ -27,7 +27,7 @@ func (s *sequentialNumberGenerator) Peek() PacketNumber {
 }
 
 func NewRandomNumberGenerator() (gen *sequentialNumberGenerator, err error) {
-	init, err := randSeqNr()
+	init, err := seedSeqNumber()
 	if err != nil {
 		return
 	}
@@ -38,7 +38,7 @@ func NewRandomNumberGenerator() (gen *sequentialNumberGenerator, err error) {
 }
 
 // generate a cryptographically secure initial sequence number
-func randSeqNr() (PacketNumber, error) {
+func seedSeqNumber() (PacketNumber, error) {
 	var bytes [2]byte
 
 	_, err := rand.Read(bytes[:])

@@ -7,19 +7,30 @@ import (
 	"gitlab.lrz.de/bbrft/brft/common"
 	"gitlab.lrz.de/bbrft/cyberbyte"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/cryptobyte"
 )
 
 type FileRespStatus uint8
 
 const (
-	FileRespStatusUndefined FileRespStatus = iota
+	FileRespStatusReserved FileRespStatus = iota
 	FileRespStatusOk
 	FileRespStatusFileChanged
+	FileRespStatusUnsupportedOptionalHeader
+	FileRespStatusUnexpectedOptionalHeader
 	// ...
 )
 
-type StreamID uint16
+var fileRespStatusPrecedence = map[FileRespStatus]int{
+	FileRespStatusReserved:                  0,
+	FileRespStatusOk:                        1,
+	FileRespStatusFileChanged:               4,
+	FileRespStatusUnsupportedOptionalHeader: 2,
+	FileRespStatusUnexpectedOptionalHeader:  3,
+}
+
+func (s FileRespStatus) HasPrecedence(other FileRespStatus) bool {
+	return fileRespStatusPrecedence[s] > fileRespStatusPrecedence[other]
+}
 
 type FileResp struct {
 	Status     FileRespStatus
@@ -33,12 +44,16 @@ type FileResp struct {
 	Checksum []byte
 }
 
-func (m *FileResp) baseHeaderLen() int {
-	// status + streamID + file size
-	return 1 + 2 + 8
+func (m *FileResp) baseSize() int {
+	// status + streamID + file size + checksum size
+	return 1 + 2 + 8 + common.ChecksumSize
 }
 
-func (m *FileResp) Marshal(l *zap.Logger) ([]byte, error) {
+func (m *FileResp) Name() string {
+	return "FileResp"
+}
+
+func (m *FileResp) Encode(l *zap.Logger) ([]byte, error) {
 	if len(m.Checksum) != common.ChecksumSize {
 		return nil, errors.New("invalid checksum length")
 	}
@@ -49,8 +64,7 @@ func (m *FileResp) Marshal(l *zap.Logger) ([]byte, error) {
 	}
 
 	// determine the length of the output
-	outLen := m.baseHeaderLen() + len(optHeaderBytes) + common.ChecksumSize
-	b := cryptobyte.NewFixedBuilder(make([]byte, 0, outLen))
+	b := NewFixedBRFTMessageBuilderWithExtra(m, len(optHeaderBytes))
 
 	// add the status
 	b.AddUint8(uint8(m.Status))
@@ -66,7 +80,7 @@ func (m *FileResp) Marshal(l *zap.Logger) ([]byte, error) {
 	return b.Bytes()
 }
 
-func (m *FileResp) Read(l *zap.Logger, s *cyberbyte.String) error {
+func (m *FileResp) Decode(l *zap.Logger, s *cyberbyte.String) error {
 	// read the status
 	var status uint8
 	if err := s.ReadUint8(&status); err != nil {

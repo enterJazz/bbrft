@@ -35,6 +35,8 @@ func (flags FileReqFlags) IsSet(flag FileReqFlag) bool {
 type FileReq struct {
 	// NOTE: The whole message has to be length delimeted in order to know how many bytes the receiver is supposed to read
 
+	StreamID StreamID
+
 	Flags FileReqFlags
 
 	// OptionalHeaders for the upcomming file transfer
@@ -46,12 +48,16 @@ type FileReq struct {
 	Checksum []byte
 }
 
-func (m *FileReq) baseHeaderLen() int {
-	// flags + file name length
-	return 1 + 1
+func (m *FileReq) Name() string {
+	return "FileReq"
 }
 
-func (m *FileReq) Marshal(l *zap.Logger) ([]byte, error) {
+func (m *FileReq) baseSize() int {
+	// streamID + flags + file name length
+	return 2 + 1 + 1 + len([]byte(m.FileName)) + common.ChecksumSize
+}
+
+func (m *FileReq) Encode(l *zap.Logger) ([]byte, error) {
 	if len(m.Checksum) == 0 {
 		l.Warn("unset checksum, initializing with zeros<")
 		m.Checksum = make([]byte, common.ChecksumSize)
@@ -72,8 +78,10 @@ func (m *FileReq) Marshal(l *zap.Logger) ([]byte, error) {
 	}
 
 	// determine the length of the output
-	outLen := m.baseHeaderLen() + len(optHeaderBytes) + len([]byte(fileName)) + common.ChecksumSize
-	b := cryptobyte.NewFixedBuilder(make([]byte, 0, outLen))
+	b := NewFixedBRFTMessageBuilderWithExtra(m, len(optHeaderBytes))
+
+	// write the streamID
+	b.AddUint16(uint16(m.StreamID))
 
 	// combine the flags
 	var flags FileReqFlag
@@ -100,10 +108,17 @@ func (m *FileReq) Marshal(l *zap.Logger) ([]byte, error) {
 	return b.Bytes()
 }
 
-func (m *FileReq) Read(l *zap.Logger, s *cyberbyte.String) error {
+func (m *FileReq) Decode(l *zap.Logger, s *cyberbyte.String) error {
 	// TODO: hand over the cyberbyte.String instead. This way we can easily
 	//		adapt the timeout when the RTT changes (i.e. reuse the same
 	// 		cyberbyte.String and maybe also set a timeout field on it)
+
+	// read the streamID
+	var streamID uint16
+	if err := s.ReadUint16(&streamID); err != nil {
+		return fmt.Errorf("unable to read streamID: %w", err)
+	}
+	m.StreamID = StreamID(streamID)
 
 	// read the flags
 	var joinedFlags uint8

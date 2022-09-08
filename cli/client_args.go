@@ -8,13 +8,15 @@ const (
 )
 
 type ClientArgs struct {
-	command ClientCommand
+	Command ClientCommand
 	// checksum of to-be-fetched file; nil if none specified
-	checksum string
+	Checksum string
 	// target file name of operation; nil if none specified
-	fileName string
+	FileName string
+	// dir in which requested files are stored
+	DownloadDir string
 	// target server address of operation
-	serverAddr string
+	ServerAddr string
 }
 
 func (c *ClientArgs) GetOperationMode() OperationMode {

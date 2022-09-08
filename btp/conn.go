@@ -31,7 +31,7 @@ type ConnOptions struct {
 
 func NewDefaultOptions(l *zap.Logger) *ConnOptions {
 	initCwndSize := 1
-	maxCwndSize := 10
+	maxCwndSize := 25
 
 	return &ConnOptions{
 		Network: "udp",
@@ -40,8 +40,8 @@ func NewDefaultOptions(l *zap.Logger) *ConnOptions {
 		MaxPacketSize: 1024,
 
 		// will be reset when establishing a connection
-		InitCwndSize: 1,
-		MaxCwndSize:  10,
+		InitCwndSize: uint8(initCwndSize),
+		MaxCwndSize:  uint8(maxCwndSize),
 		CC:           congestioncontrol.NewElasticTcpAlgorithm(l, initCwndSize, maxCwndSize),
 
 		ReadBufferCap: 2048,
@@ -90,7 +90,8 @@ type Conn struct {
 	ctxCancel          context.CancelFunc
 	rttMeasurement     *RTTMeasurement
 
-	txChan chan messages.Codable
+	txChan     chan messages.Codable
+	txPrioChan chan messages.Codable
 
 	sequentialDataReader  *sequentialDataReader
 	packetNumberGenerator packetNumberGenerator
@@ -139,6 +140,7 @@ func (c *Conn) start() error {
 	return nil
 }
 
+// NOTE: This function is not safe for concurrent access
 func (c *Conn) Write(b []byte) (n int, err error) {
 	payload := b
 	maxSize := int(c.Options.MaxPacketSize)
@@ -169,6 +171,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 
 // Read() returns io.Err if channel closed and read buf cannot be filled completely
 // returns num bytes read
+// NOTE: This function is not safe for concurrent access
 func (c *Conn) Read(b []byte) (n int, err error) {
 	// assumption: dataChan ordered beforehand by flow ctrl
 	for c.readBuf.Len() < len(b) {
@@ -185,6 +188,66 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 	}
 
 	return n, err
+}
+
+// RemoteAddr returns the remote network address. The Addr returned is shared
+// by all invocations of RemoteAddr, so do not modify it.
+func (c *Conn) RemoteAddr() net.Addr {
+	return c.conn.RemoteAddr()
+}
+
+// LocalAddr returns the local network address. The Addr returned is shared by
+// all invocations of LocalAddr, so do not modify it.
+func (c *Conn) LocalAddr() net.Addr {
+	return c.conn.LocalAddr()
+}
+
+// TODO: accoring to our rfc the BRFT layer is not concerned with timeouts. maybe remove timeouts again
+// SetDeadline implements the Conn SetDeadline method.
+//
+// SetDeadline sets the read and write deadlines associated
+// with the connection. It is equivalent to calling both
+// SetReadDeadline and SetWriteDeadline.
+//
+// A deadline is an absolute time after which I/O operations
+// fail instead of blocking. The deadline applies to all future
+// and pending I/O, not just the immediately following call to
+// Read or Write. After a deadline has been exceeded, the
+// connection can be refreshed by setting a deadline in the future.
+//
+// If the deadline is exceeded a call to Read or Write or to other
+// I/O methods will return an error that wraps os.ErrDeadlineExceeded.
+// This can be tested using errors.Is(err, os.ErrDeadlineExceeded).
+// The error's Timeout method will return true, but note that there
+// are other possible errors for which the Timeout method will
+// return true even if the deadline has not been exceeded.
+//
+// An idle timeout can be implemented by repeatedly extending
+// the deadline after successful Read or Write calls.
+//
+// A zero value for t means I/O operations will not time out.
+func (c *Conn) SetDeadline(t time.Time) error {
+	return c.conn.SetDeadline(t)
+}
+
+// SetReadDeadline implements the Conn SetReadDeadline method.
+//
+// SetReadDeadline sets the deadline for future Read calls
+// and any currently-blocked Read call.
+// A zero value for t means Read will not time out.
+func (c *Conn) SetReadDeadline(t time.Time) error {
+	return c.conn.SetReadDeadline(t)
+}
+
+// SetWriteDeadline implements the Conn SetWriteDeadline method.
+//
+// SetWriteDeadline sets the deadline for future Write calls
+// and any currently-blocked Write call.
+// Even if write times out, it may return n > 0, indicating that
+// some of the data was successfully written.
+// A zero value for t means Write will not time out.
+func (c *Conn) SetWriteDeadline(t time.Time) error {
+	return c.conn.SetWriteDeadline(t)
 }
 
 // Close will close a connection
@@ -204,6 +267,7 @@ func newConn(conn *net.UDPConn, options ConnOptions, l *zap.Logger) *Conn {
 		openChan:        make(chan error),
 		closeChan:       make(chan error),
 		txChan:          make(chan messages.Codable, options.MaxCwndSize),
+		txPrioChan:      make(chan messages.Codable, options.MaxCwndSize),
 		// TODO: use some better buffer defaults
 		sequentialDataReader: NewDataReader(100, 50),
 	}
@@ -226,6 +290,15 @@ func (c *Conn) send(msg messages.Codable) (n int, err error) {
 	return int(msg.Size()), nil
 }
 
+func (c *Conn) send_prio(msg messages.Codable) (n int, err error) {
+	c.txPrioChan <- msg
+	// TODO: update return parameters
+	return int(msg.Size()), nil
+}
+
+// transmit sends the next message over the underlying UDP connection
+// if packet type is ackEliciting a new sequence number will be queed
+// and a monitoring packet
 func (c *Conn) transmit(msg messages.Codable) (n int, err error) {
 	requiresAck := isAckElicitingPacket(msg)
 	l := c.logger
@@ -260,7 +333,7 @@ func (c *Conn) transmit(msg messages.Codable) (n int, err error) {
 	}
 
 	n, err = c.conn.Write(buf)
-	l.Debug("sending", FHeaderMessageTypeString(msg.GetHeader().MessageType), zap.String("raddr", c.conn.RemoteAddr().String()), zap.Int("len", n))
+	l.Debug("sending", FHeaderMessageTypeString(msg.GetHeader().MessageType), zap.Uint16("seq_nr", msg.GetHeader().SeqNr), zap.String("raddr", c.conn.RemoteAddr().String()), zap.Int("len", n))
 
 	if err != nil {
 		return
@@ -404,7 +477,7 @@ func (c *Conn) createConnReq() (req *messages.Conn, err error) {
 }
 
 func (c *Conn) sendAck(seqNr uint16) error {
-	_, err := c.send(&messages.Ack{
+	_, err := c.send_prio(&messages.Ack{
 		PacketHeader: messages.PacketHeader{
 			ProtocolType: c.Options.Version,
 			MessageType:  messages.MessageTypeAck,
@@ -417,7 +490,7 @@ func (c *Conn) sendAck(seqNr uint16) error {
 func (c *Conn) onMessage(msg messages.Codable) error {
 	l := c.logger
 
-	l.Debug("incoming msg", FHeaderMessageTypeString(msg.GetHeader().MessageType))
+	l.Debug("incoming msg", zap.Uint16("seq_nr", msg.GetHeader().SeqNr), FHeaderMessageTypeString(msg.GetHeader().MessageType))
 
 	h := msg.GetHeader()
 	// instantiate object depending on header type
@@ -489,7 +562,7 @@ func (c *Conn) onMessage(msg messages.Codable) error {
 		}
 		// TODO: @wlad should we first send ack or process message?
 		c.sendAck(msg.GetHeader().SeqNr)
-		c.sequentialDataReader.Push(msg.(*messages.Data))
+		go c.sequentialDataReader.Push(msg.(*messages.Data))
 	case messages.MessageTypeClose:
 		if !c.isConnOpen {
 			return ErrConnectionNotReady
@@ -504,18 +577,17 @@ func (c *Conn) onMessage(msg messages.Codable) error {
 func (c *Conn) run() error {
 	defer c.ctxCancel()
 
+	var closeErr error
 	l := c.logger
-	var (
-		closeErr error
-	)
 
 	go func() {
+	recvLoop:
 		for {
 			select {
 			case <-c.ctx.Done():
-				l.Debug("stopping run loop")
+				l.Debug("stopping receive loop")
 				c.isRunLoopRunning = false
-				return
+				break recvLoop
 			default:
 				msg, err := c.recv()
 				if err != nil {
@@ -529,17 +601,25 @@ func (c *Conn) run() error {
 				}
 			}
 		}
+
+		l.Debug("receive loop stopped")
 	}()
 
 runLoop:
 	for {
-		// Close immediately if requested
 		select {
+		// Close immediately if requested
 		case closeErr = <-c.closeChan:
 			l.Error("connection loop terminated", zap.Error(closeErr))
 			c.teardown()
 			break runLoop
-
+		case prio_msg := <-c.txPrioChan:
+			_, err := c.transmit(prio_msg)
+			// TODO: maybe take care of failed transmissions due to connection problems
+			// IDEA: if transmission fails place packet back on queue
+			if err != nil {
+				l.Error("message handling error", zap.Error(err))
+			}
 		default:
 		}
 
@@ -552,16 +632,20 @@ runLoop:
 				if err != nil {
 					l.Error("message handling error", zap.Error(err))
 				}
+
 			default:
 				// l.Debug("no outgoing messages")
 			}
 		}
-
+		// l.Debug("handle retransmit 1")
 		err := c.proccessRetransmission()
+		// l.Debug("handle retransmit 2")
 		if err != nil {
 			return err
 		}
 	}
+
+	l.Debug("run loop stopped")
 
 	return closeErr
 }

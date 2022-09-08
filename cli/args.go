@@ -20,7 +20,7 @@ const (
 type Args struct {
 	TestMode      bool
 	L             *zap.Logger
-	OperationArgs *OperationArgs
+	OperationArgs OperationArgs
 }
 
 type OperationArgs interface {
@@ -46,7 +46,7 @@ func ParseArgs() *Args {
 		},
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() == 0 {
-				return errors.New("no command specified; use command `help` to view available commands")
+				return errors.New("no Command specified; use Command `help` to view available commands")
 			}
 			testMode = cCtx.Bool("test-mode")
 			var logErr error
@@ -71,12 +71,12 @@ func ParseArgs() *Args {
 				Action: func(cCtx *cli.Context) error {
 					sArgs := ServerArgs{}
 					if cCtx.NArg() == 2 {
-						sArgs.serveDir = cCtx.Args().First()
+						sArgs.ServeDir = cCtx.Args().First()
 						port, err := strconv.Atoi(cCtx.Args().Get(1))
 						if err != nil {
 							return errors.New("parsing [PORT] failed: " + err.Error())
 						}
-						sArgs.port = port
+						sArgs.Port = port
 					} else {
 						return errors.New("[DIR] [PORT] required")
 					}
@@ -96,13 +96,13 @@ func ParseArgs() *Args {
 						ArgsUsage: "[FILE (optional)] [SERVER ADDRESS]",
 						Action: func(cCtx *cli.Context) error {
 							cArgs := ClientArgs{
-								command: MetaDataRequest,
+								Command: MetaDataRequest,
 							}
 							if cCtx.NArg() == 1 {
-								cArgs.serverAddr = cCtx.Args().First()
+								cArgs.ServerAddr = cCtx.Args().First()
 							} else if cCtx.NArg() == 2 {
-								cArgs.fileName = cCtx.Args().First()
-								cArgs.serverAddr = cCtx.Args().Get(1)
+								cArgs.FileName = cCtx.Args().First()
+								cArgs.ServerAddr = cCtx.Args().Get(1)
 							} else {
 								return errors.New("[SERVER ADDRESS] required")
 							}
@@ -113,21 +113,23 @@ func ParseArgs() *Args {
 					{
 						Name:      "file",
 						Aliases:   []string{"f"},
-						Usage:     "get a file from a BRFTP server; set CHECKSUM to assert file content's SHA-256 hash matches CHECKSUM",
-						ArgsUsage: "[FILE] [CHECKSUM (optional)] [SERVER ADDRESS]",
+						Usage:     "get a FILE from a BRFTP server and store it in DOWNLOAD DIR; set CHECKSUM to assert file content's SHA-256 hash matches CHECKSUM",
+						ArgsUsage: "[FILE] [DOWNLOAD DIR] [CHECKSUM (optional)] [SERVER ADDRESS]",
 						Action: func(cCtx *cli.Context) error {
 							cArgs := ClientArgs{
-								command: FileRequest,
+								Command: FileRequest,
 							}
-							if cCtx.NArg() == 2 {
-								cArgs.fileName = cCtx.Args().First()
-								cArgs.serverAddr = cCtx.Args().Get(1)
-							} else if cCtx.NArg() == 3 {
-								cArgs.fileName = cCtx.Args().First()
-								cArgs.checksum = cCtx.Args().Get(1)
-								cArgs.serverAddr = cCtx.Args().Get(2)
+							if cCtx.NArg() == 3 {
+								cArgs.FileName = cCtx.Args().First()
+								cArgs.DownloadDir = cCtx.Args().Get(1)
+								cArgs.ServerAddr = cCtx.Args().Get(2)
+							} else if cCtx.NArg() == 4 {
+								cArgs.FileName = cCtx.Args().First()
+								cArgs.DownloadDir = cCtx.Args().Get(1)
+								cArgs.Checksum = cCtx.Args().Get(2)
+								cArgs.ServerAddr = cCtx.Args().Get(3)
 							} else {
-								return errors.New("[FILE] [CHECKSUM (optional)] [SERVER ADDRESS] required")
+								return errors.New("[FILE] [DOWNLOAD DIR] [CHECKSUM (optional)] [SERVER ADDRESS] required")
 							}
 							optionArgs = &cArgs
 							return nil
@@ -146,7 +148,7 @@ func ParseArgs() *Args {
 	args := Args{
 		TestMode:      testMode,
 		L:             l,
-		OperationArgs: &optionArgs,
+		OperationArgs: optionArgs,
 	}
 
 	return &args

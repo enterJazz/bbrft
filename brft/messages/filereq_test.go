@@ -14,7 +14,7 @@ import (
 
 // TODO: Write test for marshal and unmarshal individually
 
-func TestFileReqMarshalUnmarshal(t *testing.T) {
+func TestFileReqEncodeDecode(t *testing.T) {
 	l, err := zap.NewDevelopment()
 	if err != nil {
 		t.Fatalf("unable to initialize logger")
@@ -37,27 +37,27 @@ func TestFileReqMarshalUnmarshal(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.m.Marshal(l)
+			got, err := tt.m.Encode(l)
 			if (err != nil) != tt.wantErrMarshal {
-				t.Errorf("FileReq.Marshal() error = %v, wantErr %v", err, tt.wantErrMarshal)
+				t.Errorf("FileReq.Encode() error = %v, wantErr %v", err, tt.wantErrMarshal)
 				return
 			}
 
-			fmt.Printf("message: %s\n", spew.Sdump(got))
+			fmt.Printf("message: %s\n", spew.Sdump("\n", got))
 
 			// receiver stuff
 			m := new(FileReq)
 			r := bytes.NewReader(got)
 			s := cyberbyte.NewString(r, cyberbyte.DefaultTimeout)
 
-			err = m.Read(l, s)
+			err = m.Decode(l, s)
 			if (err != nil) != tt.wantErrMarshal {
-				t.Fatalf("FileReq.Marshal() error = %v, wantErr %v", err, tt.wantErrMarshal)
+				t.Fatalf("FileReq.Decode() error = %v, wantErr %v", err, tt.wantErrMarshal)
 			}
 
 			// compare the input and output
 			if !reflect.DeepEqual(*m, tt.m) {
-				t.Errorf("Marshal-Unmarshal = %v, want %v\n%s", *m, tt.m, spew.Sdump(*m, tt.m))
+				t.Errorf("Encode-Decode = %v, want %v\n%s", *m, tt.m, spew.Sdump("\n", *m, tt.m))
 
 			}
 		})
