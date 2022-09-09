@@ -111,9 +111,7 @@ func (c *Conn) ListFileMetaData(
 		return nil, fmt.Errorf("channel closed before MetaDataRequest finished")
 	}
 
-	// TODO: handle extended
 	// wait for response
-	// TODO: if resp more than 255 items: loop @robert; also add some test
 	resps := make([]*messages.MetaResp, 0)
 	for {
 		resp := <-req_ref.resp_chan
@@ -299,7 +297,6 @@ func (c *Conn) handleClientConnection() {
 	go c.sendMessages(c.outCtrl, c.outData)
 
 	for {
-		// FIXME: this is blocking frever - we need to either read or listen on c.close channel
 		inMsg, h, err := c.readMsg()
 		if err != nil {
 			closeConn("could not read message_type", err)

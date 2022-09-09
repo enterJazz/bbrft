@@ -130,8 +130,7 @@ func (s *Server) ListenAndServe() error {
 	}
 }
 
-// FIXME: Figure out how to implement a gracefull shutdown when the BTP layer
-// handles timeouts
+// TODO: improve graceful shutdown
 // NOTE: This function can only run in a single thread, since we always need to
 // read the whole message from the btp.Conn
 func (c *Conn) handleServerConnection() {
@@ -152,7 +151,6 @@ func (c *Conn) handleServerConnection() {
 
 	// wait for incomming messages
 	for {
-		// FIXME: this is blocking frever - we need to either read or listen on c.close channel
 		inMsg, h, err := c.readMsg()
 		if err != nil {
 			closeConn("could not read message_type", err)

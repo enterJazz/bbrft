@@ -76,7 +76,6 @@ func (c *Conn) Close() error {
 	c.l.Debug("closing btp connection")
 	// TODO: It could be that we try to close the connection after it has
 	// 		already been closed (and returned an error on Read/Write)
-	// close the btp.Conn
 	return c.conn.Close()
 }
 

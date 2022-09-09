@@ -132,7 +132,7 @@ func TestTransferNoCompression(t *testing.T) {
 	testFile := "test-1.jpg"
 
 	l, c, close := setupTest(t,
-		[]log.Option{log.WithProd(true)}, // TODO: Re-vert
+		[]log.Option{log.WithProd(true)},
 		[]log.Option{log.WithProd(true)},
 		false,
 	)
