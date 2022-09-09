@@ -1,6 +1,6 @@
 # TODO
-- go through the requirements
-- go over the feedback of the prof
+- write a readme
+- improve the comments
 
 ## BRFT
 - Server must honor the offset set if it is a retransmit 
@@ -9,6 +9,7 @@
 - TestBigTransfer reports that we have transfered more data than we actually advertised in the beginning
 - ListFileMetaData must return multiple MetaDataResps
     - therefore, they also need to be concatenated
+
 
 - client-server tests
     - simple test for negotiation
