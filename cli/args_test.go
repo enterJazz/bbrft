@@ -153,11 +153,12 @@ func TestParseArgsGetMetaData(t *testing.T) {
 
 func TestParseArgsGetFile(t *testing.T) {
 	tests := []struct {
-		name        string
-		fCs         []string
-		downloadDir string
-		serverAddr  string
-		expectErr   bool
+		name           string
+		fCs            []string
+		downloadDir    string
+		serverAddr     string
+		useCompression bool
+		expectErr      bool
 	}{
 		{
 			"valid-full-single",
@@ -166,6 +167,7 @@ func TestParseArgsGetFile(t *testing.T) {
 			},
 			"./my-download-dir",
 			"1.2.3.4:1234",
+			false,
 			false,
 		},
 		{
@@ -177,6 +179,7 @@ func TestParseArgsGetFile(t *testing.T) {
 			},
 			"./my-download-dir",
 			"1.2.3.4:1234",
+			true,
 			false,
 		},
 		{
@@ -186,6 +189,7 @@ func TestParseArgsGetFile(t *testing.T) {
 			},
 			"./my-download-dir",
 			"1.2.3.4:1234",
+			true,
 			false,
 		},
 		{
@@ -197,6 +201,7 @@ func TestParseArgsGetFile(t *testing.T) {
 			},
 			"./my-download-dir",
 			"1.2.3.4:1234",
+			true,
 			false,
 		},
 		{
@@ -208,6 +213,7 @@ func TestParseArgsGetFile(t *testing.T) {
 			},
 			"./my-download-dir",
 			"1.2.3.4:1234",
+			true,
 			false,
 		},
 		{
@@ -218,6 +224,7 @@ func TestParseArgsGetFile(t *testing.T) {
 			"./my-download-dir",
 			"1.2.3.4:1234",
 			true,
+			true,
 		},
 		{
 			"invalid-no-filename-but-checksum",
@@ -226,6 +233,7 @@ func TestParseArgsGetFile(t *testing.T) {
 			},
 			"./my-download-dir",
 			"1.2.3.4:1234",
+			true,
 			true,
 		},
 		{
@@ -236,12 +244,14 @@ func TestParseArgsGetFile(t *testing.T) {
 			"./my-download-dir",
 			"1.2.3.4:1234",
 			true,
+			true,
 		},
 		{
 			"invalid-no-args",
 			[]string{},
 			"",
 			"",
+			true,
 			true,
 		},
 	}
@@ -253,6 +263,9 @@ func TestParseArgsGetFile(t *testing.T) {
 				binary,
 				getCmd,
 				getFileSubCmd,
+			}
+			if !tt.useCompression {
+				os.Args = append(os.Args, "--disable-compression")
 			}
 			os.Args = append(os.Args, tt.fCs...)
 			os.Args = append(os.Args, tt.downloadDir, tt.serverAddr)
@@ -299,6 +312,10 @@ func TestParseArgsGetFile(t *testing.T) {
 				if !valueContained {
 					t.Errorf("value %v not found in given file names = %v, want = %v", f, spew.Sdump("\n", cArgs.DownloadFiles), spew.Sdump("\n", tt.fCs))
 				}
+			}
+
+			if tt.useCompression != cArgs.UseCompression {
+				t.Errorf("useCompression does not match = %v, want = %v", cArgs.UseCompression, tt.useCompression)
 			}
 
 			if cArgs.DownloadDir != tt.downloadDir {

@@ -42,7 +42,7 @@ func Dial(
 	}
 
 	if options == nil {
-		c.options = NewDefaultOptions(l)
+		c.options = NewDefaultOptions(l, compression.DefaultCompressionEnabled)
 	} else {
 		c.options = *options
 	}

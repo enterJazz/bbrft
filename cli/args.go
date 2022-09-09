@@ -10,9 +10,12 @@ import (
 
 	"github.com/urfave/cli/v2"
 	"gitlab.lrz.de/bbrft/brft/common"
+	"gitlab.lrz.de/bbrft/brft/compression"
 )
 
 type OperationMode int
+
+var HelpError error = errors.New("helpErr")
 
 const (
 	Server OperationMode = iota
@@ -102,8 +105,9 @@ func ParseArgs() (*Args, error) {
 						ArgsUsage: "[FILE (optional)] [SERVER ADDRESS]",
 						Action: func(cCtx *cli.Context) error {
 							cArgs := ClientArgs{
-								Command:       MetaDataRequest,
-								DownloadFiles: make(map[string][]byte),
+								Command:        MetaDataRequest,
+								DownloadFiles:  make(map[string][]byte),
+								UseCompression: compression.DefaultCompressionEnabled,
 							}
 							if cCtx.NArg() == 1 {
 								cArgs.DownloadFiles[""] = make([]byte, common.ChecksumSize)
@@ -127,10 +131,18 @@ func ParseArgs() (*Args, error) {
 						Aliases:   []string{"f"},
 						Usage:     "get FILE(s) from a BRFTP server at SERVER ADDRESS and store them in DOWNLOAD DIR; set CHECKSUM to assert file content's SHA-256 hash matches CHECKSUM",
 						ArgsUsage: "[FILE1:CHECKSUM1(optional) | (optional) FILE2:CHECKSUM2(optional) | ...] [DOWNLOAD DIR] [SERVER ADDRESS]",
+						Flags: []cli.Flag{
+							&cli.BoolFlag{
+								Name:    "disable-compression",
+								Aliases: []string{"c"},
+								Usage:   "disables brft layer compression for getting files",
+							},
+						},
 						Action: func(cCtx *cli.Context) error {
 							cArgs := ClientArgs{
-								Command:       FileRequest,
-								DownloadFiles: make(map[string][]byte),
+								Command:        FileRequest,
+								DownloadFiles:  make(map[string][]byte),
+								UseCompression: !cCtx.Bool("disable-compression"),
 							}
 							if cCtx.NArg() < 3 {
 								return errors.New("[FILE:CHECKSUM(optional) | ...] [DOWNLOAD DIR] [SERVER ADDRESS] required")
@@ -196,6 +208,9 @@ func ParseArgs() (*Args, error) {
 	}
 
 	if optionArgs == nil {
+		if len(os.Args) >= 2 && (os.Args[len(os.Args)-1] == "help" || os.Args[len(os.Args)-1] == "h" || os.Args[len(os.Args)-1] == "--help" || os.Args[len(os.Args)-1] == "-h") {
+			return nil, HelpError
+		}
 		return nil, errors.New("error parsing args: given command unknown")
 	}
 

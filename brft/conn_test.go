@@ -26,11 +26,12 @@ const (
 func setupTest(t *testing.T,
 	brftOpts []log.Option,
 	btpOpts []log.Option,
+	compression bool,
 ) (*zap.Logger, *Conn, func()) {
 	l, _ := log.NewLogger(brftOpts...)
 	lBtp, err := log.NewLogger(btpOpts...)
 
-	opt := &ServerOptions{NewDefaultOptions(lBtp)}
+	opt := &ServerOptions{NewDefaultOptions(lBtp, compression)}
 	s, laddr, err := NewServer(l, serverAddr, serverDir, opt)
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +46,7 @@ func setupTest(t *testing.T,
 	}()
 
 	t.Log(laddr.String())
-	optD := NewDefaultOptions(lBtp)
+	optD := NewDefaultOptions(lBtp, compression)
 	optD.chunkSizeFactor = 63 // 4MB
 	c, err := Dial(l, laddr.String(), clientDir, &optD)
 	if err != nil {
@@ -115,6 +116,25 @@ func TestTransfer(t *testing.T) {
 	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(true)},
 		[]log.Option{log.WithProd(true)},
+		true,
+	)
+	defer close()
+	removeTestFiles(t, testFile)
+	prog, err := c.DownloadFile(testFile, nil)
+	if err != nil {
+		t.Error(err)
+	}
+
+	LogProgress(l, testFile, prog)
+}
+
+func TestTransferNoCompression(t *testing.T) {
+	testFile := "test-1.jpg"
+
+	l, c, close := setupTest(t,
+		[]log.Option{log.WithProd(true)}, // TODO: Re-vert
+		[]log.Option{log.WithProd(true)},
+		false,
 	)
 	defer close()
 	removeTestFiles(t, testFile)
@@ -132,6 +152,7 @@ func TestBigTransfer(t *testing.T) {
 	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(true)},
 		[]log.Option{log.WithProd(true)},
+		true,
 	)
 	defer close()
 	removeTestFiles(t, testFile)
@@ -158,6 +179,7 @@ func TestMultiTransfer(t *testing.T) {
 	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(true)},
 		[]log.Option{log.WithProd(true)},
+		true,
 	)
 	defer close()
 	removeTestFiles(t, keys...)
@@ -184,6 +206,7 @@ func TestConcurrentDownloadAndMetaDataRequest(t *testing.T) {
 	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(false)},
 		[]log.Option{log.WithProd(true)},
+		true,
 	)
 	defer close()
 	removeTestFiles(t, keys...)
@@ -224,6 +247,7 @@ func TestNonExistingFile(t *testing.T) {
 	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(false)},
 		[]log.Option{log.WithProd(true)},
+		true,
 	)
 	defer close()
 	removeTestFiles(t, testFile)
@@ -283,6 +307,7 @@ func TestMetaData(t *testing.T) {
 	_, c, close := setupTest(t,
 		[]log.Option{log.WithProd(false)},
 		[]log.Option{log.WithProd(true)},
+		true,
 	)
 	defer close()
 	if _, err := c.ListFileMetaData(""); err != nil {
@@ -298,12 +323,10 @@ func TestMetaData(t *testing.T) {
 
 func TestMaxItemsMetadata(t *testing.T) {
 	testFileNames := make([]string, 0)
-	testFiles := make([]string, 0)
 	for i := 0; i < messages.MaxMetaItemsNum*2; i++ {
 		testFileName := fmt.Sprintf("test-%v.txt", i)
 		testFileNames = append(testFileNames, testFileName)
 		testFile := path.Join(serverDir, testFileName)
-		testFiles = append(testFiles, testFile)
 		if _, err := os.Create(testFile); err != nil {
 			t.Errorf("failed to create file: %v", err)
 		}
@@ -312,6 +335,7 @@ func TestMaxItemsMetadata(t *testing.T) {
 	_, c, close := setupTest(t,
 		[]log.Option{log.WithProd(false)},
 		[]log.Option{log.WithProd(true)},
+		true,
 	)
 	defer func() {
 		removeTestFilesServer(t, testFileNames...)

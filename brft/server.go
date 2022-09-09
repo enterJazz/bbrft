@@ -52,7 +52,7 @@ func NewServer(
 ) (*Server, *net.UDPAddr, error) {
 	opt := options
 	if opt == nil {
-		opt = &ServerOptions{NewDefaultOptions(l)}
+		opt = &ServerOptions{NewDefaultOptions(l, compression.DefaultCompressionEnabled)}
 	}
 
 	laddr, err := net.ResolveUDPAddr(opt.BtpOptions.Network, listenAddr)
