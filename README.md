@@ -13,6 +13,13 @@ Best-RFT
 ## About
 The Best Robust File Transfer Protocol (BRFTP) is an application- and transport level request/response protocol with minimal state, built on top of UDP. The protocol enables file transfer over an unreliable network. A server thereby offers files for download. A client may request one or more files for download. BRFTP enables the client to robustly retrieve files from the server, transfer in a compressed manner. Additionally, BRFTP enables file change detection, download resumption and multi-file downloads.
 
+For a detailed overview, view the [BRFT RFC](bbrft-rfc.pdf) contained in this repo.
+
+This instance was implemented by:
+- Michael Hegel: michael.hegel@tum.de
+- Wladislaw Meixner: wlad.meixner@tum.de
+- Robert Schambach: scha@in.tum.de
+
 ## Installation
 
 The brft client and server can be easily installed using the native go command
