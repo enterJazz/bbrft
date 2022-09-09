@@ -4,7 +4,7 @@
 
 @robert
 - close btp
-- cli extra files
+- cli extra files DONE
 - fix metadatareq
 - maybe README
 - add checksum tests
@@ -45,7 +45,7 @@
 
 ## CLI
 - add cli support for enabling/disabling compression
-- add cli support for multiple files (in devel branch) @robert
+- add cli support for multiple files (in devel branch) @robert DONE
 - add logger customization
 
 # Notes
