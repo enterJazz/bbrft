@@ -370,7 +370,10 @@ func (c *Conn) handleClientConnection() {
 				resp: *msg,
 				err:  nil,
 			}
-			c.metaDataRequests = c.metaDataRequests[1:]
+			// check if resp contains max item count (255): then another resp should follow; else none should follow
+			if len(msg.Items) < messages.MaxMetaItemsNum {
+				c.metaDataRequests = c.metaDataRequests[1:]
+			}
 
 			c.metaDataRequestMu.Unlock()
 

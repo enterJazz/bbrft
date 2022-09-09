@@ -2,11 +2,13 @@ package brft
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"testing"
 	"time"
 
+	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -276,4 +278,27 @@ func TestMetaData(t *testing.T) {
 	}
 
 	time.Sleep(10 * time.Second)
+}
+
+func TestMaxItemsMetadata(t *testing.T) {
+	testFiles := make([]string, 0)
+	for i := 0; i < messages.MaxMetaItemsNum*2; i++ {
+		testFile := path.Join(serverDir, fmt.Sprintf("test-%v.txt", i))
+		testFiles = append(testFiles, testFile)
+		if _, err := os.Create(testFile); err != nil {
+			t.Errorf("failed to create file: %v", err)
+		}
+	}
+
+	_, c, close := setupTest(t,
+		[]log.Option{log.WithProd(false)},
+		[]log.Option{log.WithProd(true)},
+	)
+	defer close()
+	if _, err := c.ListFileMetaData(""); err != nil {
+		t.Error(err)
+	}
+
+	time.Sleep(10 * time.Second)
+	removeTestFiles(t, testFiles...)
 }
