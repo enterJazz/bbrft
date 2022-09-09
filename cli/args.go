@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/urfave/cli/v2"
+	"gitlab.lrz.de/bbrft/brft/common"
 )
 
 type OperationMode int
@@ -15,6 +18,9 @@ const (
 	Server OperationMode = iota
 	Client
 )
+
+// len of checksum for base64 encoding
+const inputChecksumLen int = 64
 
 type Args struct {
 	TestMode      bool
@@ -25,7 +31,7 @@ type OperationArgs interface {
 	GetOperationMode() OperationMode
 }
 
-func ParseArgs() *Args {
+func ParseArgs() (*Args, error) {
 	var (
 		testMode   bool
 		optionArgs OperationArgs
@@ -58,6 +64,9 @@ func ParseArgs() *Args {
 					sArgs := ServerArgs{}
 					if cCtx.NArg() == 2 {
 						sArgs.ServeDir = cCtx.Args().First()
+						if sArgs.ServeDir == "" {
+							return errors.New("[DIR] may not be empty")
+						}
 						port, err := strconv.Atoi(cCtx.Args().Get(1))
 						if err != nil {
 							return errors.New("parsing [PORT] failed: " + err.Error())
@@ -82,15 +91,21 @@ func ParseArgs() *Args {
 						ArgsUsage: "[FILE (optional)] [SERVER ADDRESS]",
 						Action: func(cCtx *cli.Context) error {
 							cArgs := ClientArgs{
-								Command: MetaDataRequest,
+								Command:       MetaDataRequest,
+								DownloadFiles: make(map[string][]byte),
 							}
 							if cCtx.NArg() == 1 {
+								cArgs.DownloadFiles[""] = make([]byte, common.ChecksumSize)
 								cArgs.ServerAddr = cCtx.Args().First()
 							} else if cCtx.NArg() == 2 {
-								cArgs.FileName = cCtx.Args().First()
+								cArgs.DownloadFiles[cCtx.Args().First()] = make([]byte, common.ChecksumSize)
 								cArgs.ServerAddr = cCtx.Args().Get(1)
 							} else {
 								return errors.New("[SERVER ADDRESS] required")
+							}
+							// sanity check: no empty server addr
+							if cArgs.ServerAddr == "" {
+								return errors.New("[SERVER ADDRESS] required: must be non-empty")
 							}
 							optionArgs = &cArgs
 							return nil
@@ -99,24 +114,63 @@ func ParseArgs() *Args {
 					{
 						Name:      "file",
 						Aliases:   []string{"f"},
-						Usage:     "get a FILE from a BRFTP server and store it in DOWNLOAD DIR; set CHECKSUM to assert file content's SHA-256 hash matches CHECKSUM",
-						ArgsUsage: "[FILE] [DOWNLOAD DIR] [CHECKSUM (optional)] [SERVER ADDRESS]",
+						Usage:     "get FILE(s) from a BRFTP server at SERVER ADDRESS and store them in DOWNLOAD DIR; set CHECKSUM to assert file content's SHA-256 hash matches CHECKSUM",
+						ArgsUsage: "[FILE1:CHECKSUM1(optional) | (optional) FILE2:CHECKSUM2(optional) | ...] [DOWNLOAD DIR] [SERVER ADDRESS]",
 						Action: func(cCtx *cli.Context) error {
 							cArgs := ClientArgs{
-								Command: FileRequest,
+								Command:       FileRequest,
+								DownloadFiles: make(map[string][]byte),
 							}
-							if cCtx.NArg() == 3 {
-								cArgs.FileName = cCtx.Args().First()
-								cArgs.DownloadDir = cCtx.Args().Get(1)
-								cArgs.ServerAddr = cCtx.Args().Get(2)
-							} else if cCtx.NArg() == 4 {
-								cArgs.FileName = cCtx.Args().First()
-								cArgs.DownloadDir = cCtx.Args().Get(1)
-								cArgs.Checksum = cCtx.Args().Get(2)
-								cArgs.ServerAddr = cCtx.Args().Get(3)
-							} else {
-								return errors.New("[FILE] [DOWNLOAD DIR] [CHECKSUM (optional)] [SERVER ADDRESS] required")
+							if cCtx.NArg() < 3 {
+								return errors.New("[FILE:CHECKSUM(optional) | ...] [DOWNLOAD DIR] [SERVER ADDRESS] required")
 							}
+
+							// parse [FILE:CHECKSUM | ...]
+							for i := 0; i < cCtx.Args().Len()-2; i++ {
+								var (
+									downloadFile string
+									checksum     []byte
+								)
+								// check if ':' contained; if yes, tail is checksum
+								fileChecksumArg := cCtx.Args().Get(i)
+								// check not empty
+								if fileChecksumArg == "" {
+									return errors.New("error parsing [FILE:CHECKSUM]: may not be set as empty")
+								}
+								// check that parsed arg does not begin with ':' (empty file name)
+								if fileChecksumArg[0] == ':' {
+									return errors.New("error parsing [FILE:CHECKSUM]: FILE may not be empty")
+								}
+								parsedArg := strings.FieldsFunc(fileChecksumArg, func(r rune) bool {
+									return r == ':'
+								})
+								// in specs, we don't allow : to be part of file name; so if the result array has more than two els,
+								// we error (as : was in file name)
+								if len(parsedArg) > 2 || len(parsedArg) == 0 {
+									// == 0 : sanity check if only ':' as input
+									return errors.New("error parsing FILE: ':' is NOT allowed as part of the file name")
+								}
+								downloadFile = parsedArg[0]
+								checksum = make([]byte, common.ChecksumSize)
+								if len(parsedArg) == 2 {
+									// parse to []byte
+									checksum, err := hex.DecodeString(parsedArg[1])
+									if err != nil {
+										return err
+									}
+
+									// check if checksum is valid length
+									if len(checksum) != common.ChecksumSize {
+										return fmt.Errorf("error parsing CHECKSUM: given checksum is invalid (not of length %v) or not in base64", inputChecksumLen)
+									}
+									cArgs.DownloadFiles[downloadFile] = checksum
+								} else {
+									cArgs.DownloadFiles[downloadFile] = checksum
+								}
+							}
+
+							cArgs.DownloadDir = cCtx.Args().Get(cCtx.Args().Len() - 2)
+							cArgs.ServerAddr = cCtx.Args().Get(cCtx.Args().Len() - 1)
 							optionArgs = &cArgs
 							return nil
 						},
@@ -127,8 +181,7 @@ func ParseArgs() *Args {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		fmt.Printf("failed to parse args: %v\n", err)
-		os.Exit(1)
+		return nil, err
 	}
 
 	args := Args{
@@ -136,5 +189,5 @@ func ParseArgs() *Args {
 		OperationArgs: optionArgs,
 	}
 
-	return &args
+	return &args, nil
 }

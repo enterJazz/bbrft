@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -12,12 +13,12 @@ import (
 )
 
 func main() {
-	args := cli.ParseArgs()
-	// FIXME: ParseArgs should ret err
-	// FIXME: calling binary without correct input shows goroutine and SIGSEGV
-	if args == nil {
-		os.Exit(0)
+	args, err := cli.ParseArgs()
+	if err != nil {
+		fmt.Printf("failed to parse args: %v\n", err)
+		os.Exit(1)
 	}
+	// FIXME: calling binary without correct input shows goroutine and SIGSEGV
 
 	switch args.OperationArgs.GetOperationMode() {
 	case cli.Client:
@@ -78,24 +79,59 @@ func runClient(args *cli.Args) {
 		cliLog.Fatal("failed to connect to server", zap.Error(err))
 	}
 
+	getSingleKeyValPair := func(m map[string][]byte) (f string, cs []byte, err error) {
+		if len(m) != 1 {
+			return "", nil, errors.New("given map does not exactly contain a single k:v pair")
+		}
+		for k, v := range m {
+			f = k
+			cs = v
+		}
+		return
+	}
+
 	switch cArgs.Command {
 	case cli.FileRequest:
 		fmt.Println("starting download")
-		prog, err := c.DownloadFile(cArgs.FileName)
-		if err != nil {
-			cliLog.Fatal("failed to download file", zap.Error(err))
+		// case single download
+		if len(cArgs.DownloadFiles) == 1 {
+			f, cs, err := getSingleKeyValPair(cArgs.DownloadFiles)
+			if err != nil {
+				cliLog.Fatal("error parsing files", zap.Error(err))
+			}
+			prog, err := c.DownloadFile(f, cs)
+			if err != nil {
+				cliLog.Fatal("failed to download file", zap.Error(err))
+			} else {
+				log.LogProgress(cliLog, f, prog)
+			}
 		} else {
-			log.LogProgress(cliLog, cArgs.FileName, prog)
+			progs, err := c.DownloadFiles(cArgs.DownloadFiles)
+			if err != nil {
+				cliLog.Fatal("failed to download files", zap.Error(err))
+			}
+
+			log.LogMultipleProgresses(cliLog, progs)
 		}
-		log.LogProgress(cliLog, cArgs.FileName, prog)
 	case cli.MetaDataRequest:
-		resp, err := c.ListFileMetaData(cArgs.FileName)
+		f, _, err := getSingleKeyValPair(cArgs.DownloadFiles)
+		if err != nil {
+			cliLog.Fatal("error parsing files", zap.Error(err))
+		}
+
+		resp, err := c.ListFileMetaData(f)
 		if err != nil {
 			cliLog.Fatal("failed to fetch file metadata", zap.Error(err))
 		}
 
-		fmt.Println("files available on server:")
-		fmt.Println("--------------------------")
+		// case MetaDataReq lists server dir
+		if f != "" {
+			fmt.Println("files available on server:")
+			fmt.Println("--------------------------")
+		} else {
+			fmt.Printf("file details of %s\n", f)
+			fmt.Println("--------------------------")
+		}
 		for _, item := range resp.Items {
 			if item.FileSize != nil {
 				fmt.Printf("%s %dB %x \n", item.FileName, *item.FileSize, item.Checksum)

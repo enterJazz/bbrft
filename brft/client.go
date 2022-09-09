@@ -124,18 +124,19 @@ func (c *Conn) ListFileMetaData(
 	return &resp.resp, nil
 }
 
-func (c *Conn) DownloadFiles(fileNames []log.FileName) (map[log.FileName]*log.DownloadInfo, error) {
-	if len(fileNames) == 0 {
+func (c *Conn) DownloadFiles(fNameChecksumMap map[string][]byte) (map[log.FileName]*log.DownloadInfo, error) {
+	if len(fNameChecksumMap) == 0 {
 		return nil, errors.New("no files give")
 	}
 
 	g := new(errgroup.Group)
 	mu := sync.Mutex{}
-	infos := make(map[log.FileName]*log.DownloadInfo, len(fileNames))
-	for _, f := range fileNames {
+	infos := make(map[log.FileName]*log.DownloadInfo, len(fNameChecksumMap))
+	for f, cs := range fNameChecksumMap {
 		f := f // https://golang.org/doc/faq#closures_and_goroutines
+		cs := cs
 		g.Go(func() error {
-			info, err := c.DownloadFile(f)
+			info, err := c.DownloadFile(f, cs)
 			if err != nil {
 				return err
 			}
@@ -152,17 +153,22 @@ func (c *Conn) DownloadFiles(fileNames []log.FileName) (map[log.FileName]*log.Do
 }
 
 // DownloadFile starts a donwload on the provided BRFT connection
-//
 func (c *Conn) DownloadFile(
 	fileName string,
+	checksum []byte,
 ) (info *log.DownloadInfo, err error) {
 	l := c.l.With(zap.String("filename", fileName))
 
 	if !c.isClient {
 		return nil, ErrExpectedClientConnection
 	}
+	if checksum == nil {
+		checksum = make([]byte, common.ChecksumSize)
+	} else if len(checksum) != common.ChecksumSize {
+		return nil, ErrInvalidChecksum
+	}
 
-	l.Info("initiating new dowload")
+	c.l.Info("initiating new download")
 
 	// create a new request
 	sid := c.newStreamID()
@@ -174,7 +180,7 @@ func (c *Conn) DownloadFile(
 		FileName: fileName,
 		// Checksum is the checksum of a previous partial download or if a specific
 		// file version shall be requested. Might be unitilized or zeroed.
-		Checksum: make([]byte, common.ChecksumSize),
+		Checksum: checksum,
 	}
 
 	s := &stream{

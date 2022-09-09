@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	serverDir        string  = "../test/server"
-	clientDir        string  = "../test/downloads"
-	minProgressDelta float32 = 0.05
-	serverAddr       string  = "127.0.0.1:1337"
+	serverDir  string = "../test/server"
+	clientDir  string = "../test/downloads"
+	serverAddr string = "127.0.0.1:1337"
 )
 
 func setupTest(t *testing.T,
@@ -104,7 +103,7 @@ func TestTransfer(t *testing.T) {
 	)
 	defer close()
 	removeTestFiles(t, testFile)
-	prog, err := c.DownloadFile(testFile)
+	prog, err := c.DownloadFile(testFile, nil)
 	if err != nil {
 		t.Error(err)
 	}
@@ -122,7 +121,7 @@ func TestBigTransfer(t *testing.T) {
 	)
 	defer close()
 	removeTestFiles(t, testFile)
-	prog, err := c.DownloadFile(testFile)
+	prog, err := c.DownloadFile(testFile, nil)
 	if err != nil {
 		t.Error(err)
 	}
@@ -131,14 +130,23 @@ func TestBigTransfer(t *testing.T) {
 }
 
 func TestMultiTransfer(t *testing.T) {
-	testFiles := []string{"test-1.jpg", "test-2.jpg", "test-3.jpg", "test-4.jpg"}
+	testFiles := map[string][]byte{
+		"test-1.jpg": nil,
+		"test-2.jpg": nil,
+		"test-3.jpg": nil,
+		"test-4.jpg": nil,
+	}
+	keys := make([]string, 0, len(testFiles))
+	for k := range testFiles {
+		keys = append(keys, k)
+	}
 
 	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(true)},
 		[]log.Option{log.WithProd(true)},
 	)
 	defer close()
-	removeTestFiles(t, testFiles...)
+	removeTestFiles(t, keys...)
 	progs, err := c.DownloadFiles(testFiles)
 	if err != nil {
 		t.Error(err)
@@ -148,14 +156,23 @@ func TestMultiTransfer(t *testing.T) {
 }
 
 func TestConcurrentDownloadAndMetaDataRequest(t *testing.T) {
-	testFiles := []string{"test-1.jpg", "test-2.jpg", "test-3.jpg", "test-4.jpg"}
+	testFiles := map[string][]byte{
+		"test-1.jpg": nil,
+		"test-2.jpg": nil,
+		"test-3.jpg": nil,
+		"test-4.jpg": nil,
+	}
+	keys := make([]string, 0, len(testFiles))
+	for k := range testFiles {
+		keys = append(keys, k)
+	}
 
 	l, c, close := setupTest(t,
 		[]log.Option{log.WithProd(false)},
 		[]log.Option{log.WithProd(true)},
 	)
 	defer close()
-	removeTestFiles(t, testFiles...)
+	removeTestFiles(t, keys...)
 
 	// Download the files
 	progs, err := c.DownloadFiles(testFiles)
@@ -167,7 +184,7 @@ func TestConcurrentDownloadAndMetaDataRequest(t *testing.T) {
 	numRepeat := 5
 	metaFiles := make([]string, 0, numRepeat*len(testFiles))
 	for i := 0; i < numRepeat; i++ {
-		metaFiles = append(metaFiles, testFiles...)
+		metaFiles = append(metaFiles, keys...)
 	}
 	g := new(errgroup.Group)
 	for _, f := range metaFiles {
@@ -196,7 +213,7 @@ func TestNonExistingFile(t *testing.T) {
 	)
 	defer close()
 	removeTestFiles(t, testFile)
-	prog, err := c.DownloadFile(testFile)
+	prog, err := c.DownloadFile(testFile, nil)
 	if err != nil {
 		t.Error(err)
 	}
