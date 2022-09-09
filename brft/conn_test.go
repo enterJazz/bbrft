@@ -2,19 +2,23 @@ package brft
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path"
 	"testing"
 	"time"
 
+	"gitlab.lrz.de/bbrft/btp"
 	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 const (
-	serverDir string = "../test/server"
-	clientDir string = "../test/downloads"
+	serverDir        string  = "../test/server"
+	clientDir        string  = "../test/downloads"
+	minProgressDelta float32 = 0.05
+	serverAddr       string  = "127.0.0.1:1337"
 )
 
 func setupTest(t *testing.T,
@@ -25,7 +29,7 @@ func setupTest(t *testing.T,
 	lBtp, err := log.NewLogger(btpOpts...)
 
 	opt := &ServerOptions{NewDefaultOptions(lBtp)}
-	s, laddr, err := NewServer(l, "127.0.0.1:1337", serverDir, opt)
+	s, laddr, err := NewServer(l, serverAddr, serverDir, opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +66,23 @@ func setupTest(t *testing.T,
 	}
 }
 
+func checkMultipleClientFilesExist(files []string) error {
+	for _, file := range files {
+		if err := checkClientFileExists(file); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkClientFileExists(file string) error {
+	p := path.Join(clientDir, file)
+	if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func removeTestFiles(t *testing.T, testFiles ...string) {
 	// See if the results are already present in the download directory. If so remove them again
 	for _, file := range testFiles {
@@ -90,7 +111,7 @@ func TestTransfer(t *testing.T) {
 		t.Error(err)
 	}
 
-	LogProgress(l, testFile, prog)
+	log.LogProgress(l, testFile, prog)
 }
 
 // TODO: Create separate tests for different chunk sizes
@@ -108,7 +129,7 @@ func TestBigTransfer(t *testing.T) {
 		t.Error(err)
 	}
 
-	LogProgress(l, testFile, prog)
+	log.LogProgress(l, testFile, prog)
 }
 
 func TestMultiTransfer(t *testing.T) {
@@ -125,7 +146,7 @@ func TestMultiTransfer(t *testing.T) {
 		t.Error(err)
 	}
 
-	LogMultipleProgresses(l, progs)
+	log.LogMultipleProgresses(l, progs)
 }
 
 func TestConcurrentDownloadAndMetaDataRequest(t *testing.T) {
@@ -145,9 +166,9 @@ func TestConcurrentDownloadAndMetaDataRequest(t *testing.T) {
 	}
 
 	// get the metadata 5 times to "ensure" concurrency
-	numRepeate := 5
-	metaFiles := make([]string, 0, numRepeate*len(testFiles))
-	for i := 0; i < numRepeate; i++ {
+	numRepeat := 5
+	metaFiles := make([]string, 0, numRepeat*len(testFiles))
+	for i := 0; i < numRepeat; i++ {
 		metaFiles = append(metaFiles, testFiles...)
 	}
 	g := new(errgroup.Group)
@@ -165,7 +186,7 @@ func TestConcurrentDownloadAndMetaDataRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	LogMultipleProgresses(l, progs)
+	log.LogMultipleProgresses(l, progs)
 }
 
 func TestNonExistingFile(t *testing.T) {
@@ -182,7 +203,7 @@ func TestNonExistingFile(t *testing.T) {
 		t.Error(err)
 	}
 
-	LogProgress(l, testFile, prog)
+	log.LogProgress(l, testFile, prog)
 }
 
 func TestMetaData(t *testing.T) {

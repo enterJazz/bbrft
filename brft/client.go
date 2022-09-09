@@ -111,6 +111,7 @@ func (c *Conn) ListFileMetaData(
 
 	// TODO: handle extended
 	// wait for response
+	// TODO: if resp more than 255 items: loop @robert; also add some test
 	resp := <-req_ref.resp_chan
 	if resp.err != nil {
 		return nil, resp.err

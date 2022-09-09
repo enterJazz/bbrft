@@ -7,6 +7,7 @@ import (
 
 	"gitlab.lrz.de/bbrft/brft"
 	"gitlab.lrz.de/bbrft/cli"
+	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
 
@@ -28,11 +29,6 @@ func main() {
 	}
 }
 
-// FIXME: @michi or wlad robert, wlad was tired and lazy and just diplicated progress bar from test, we should make this pretty
-const (
-	minProgressDelta float32 = 0.05
-)
-
 func runClient(args *cli.Args) {
 	cArgs := args.OperationArgs.(*cli.ClientArgs)
 	// connect to server
@@ -45,11 +41,13 @@ func runClient(args *cli.Args) {
 	switch cArgs.Command {
 	case cli.FileRequest:
 		fmt.Println("starting download")
-		if prog, err := c.DownloadFile(cArgs.FileName); err != nil {
+		prog, err := c.DownloadFile(cArgs.FileName)
+		if err != nil {
 			args.L.Fatal("failed to download file", zap.Error(err))
 		} else {
 			brft.LogProgress(args.L, cArgs.FileName, prog)
 		}
+		log.LogProgress(args.L, cArgs.FileName, prog)
 	case cli.MetaDataRequest:
 		resp, err := c.ListFileMetaData(cArgs.FileName)
 		if err != nil {
