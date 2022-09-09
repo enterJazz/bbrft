@@ -2,13 +2,11 @@ package brft
 
 import (
 	"errors"
-	"net"
 	"os"
 	"path"
 	"testing"
 	"time"
 
-	"gitlab.lrz.de/bbrft/btp"
 	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -205,6 +203,48 @@ func TestNonExistingFile(t *testing.T) {
 
 	log.LogProgress(l, testFile, prog)
 }
+
+// func TestDownloadResumption(t *testing.T) {
+// 	filename := "tearsofsteel_4k.mov"
+
+// 	if _, err := os.Stat(path.Join(serverDir, filename)); errors.Is(err, os.ErrNotExist) {
+// 		println("please download test file first")
+// 		println("wget -o ./test/server/tearsofsteel_4k.mov http://ftp.nluug.nl/pub/graphics/blender/demo/movies/ToS/tearsofsteel_4k.mov")
+// 		panic("test file does not exist please run")
+// 	}
+
+// 	l, c, close := setupTest(t,
+// 		[]log.Option{log.WithProd(false)},
+// 		[]log.Option{log.WithProd(true)},
+// 	)
+
+// 	go func() {
+// 		info, err := c.DownloadFile(filename)
+// 		if err != nil {
+// 			panic(err)
+// 		}
+// 		log.LogProgress(l, filename, info)
+// 	}()
+// 	c.Close()
+
+// 	// try resuming download after close
+// 	t.Log("attempting redownload")
+// 	optD := NewDefaultOptions(l)
+// 	optD.chunkSizeFactor = 63 // 4MB
+// 	c, err := Dial(l, serverAddr, clientDir, &optD)
+// 	if err != nil {
+// 		close()
+// 		return
+// 	}
+
+// 	info, err := c.DownloadFile(filename)
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	log.LogProgress(l, filename, info)
+
+// 	close()
+// }
 
 func TestMetaData(t *testing.T) {
 	testFile := "test-1.jpg"

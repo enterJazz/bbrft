@@ -29,7 +29,7 @@ func (c *Conn) initiateClientHandshake() (err error) {
 }
 
 func (c *Conn) completeClientHandshake(resp *messages.ConnAck) (err error) {
-	l := c.logger.Named("handshake").With(zap.String("remote_addr", c.conn.RemoteAddr().String()))
+	l := c.logger.Named("handshake")
 
 	if resp.ActualInitCwndSize > c.Options.InitCwndSize {
 		return ErrInvalidHandshakeOption("ActualInitCwndSize")
@@ -60,7 +60,11 @@ func (c *Conn) completeClientHandshake(resp *messages.ConnAck) (err error) {
 		return
 	}
 	c.conn = newConn
+
+	// send migration ack on new connection using server sequence number
 	c.sendAck(resp.ServerSeqNr)
+
+	l.Debug("migrating complete", zap.String("new_remote_addr", raddr.String()))
 
 	return err
 }
