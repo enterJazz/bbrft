@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
@@ -82,6 +85,20 @@ func removeTestFiles(t *testing.T, testFiles ...string) {
 	// See if the results are already present in the download directory. If so remove them again
 	for _, file := range testFiles {
 		p := path.Join(clientDir, file)
+		if stat, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+			if stat.IsDir() {
+				t.Fatalf("expected file not directory: %s", p)
+			} else {
+				os.Remove(p)
+			}
+		}
+	}
+}
+
+func removeTestFilesServer(t *testing.T, testFiles ...string) {
+	// See if the results are already present in the download directory. If so remove them again
+	for _, file := range testFiles {
+		p := path.Join(serverDir, file)
 		if stat, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
 			if stat.IsDir() {
 				t.Fatalf("expected file not directory: %s", p)
@@ -281,9 +298,12 @@ func TestMetaData(t *testing.T) {
 }
 
 func TestMaxItemsMetadata(t *testing.T) {
+	testFileNames := make([]string, 0)
 	testFiles := make([]string, 0)
 	for i := 0; i < messages.MaxMetaItemsNum*2; i++ {
-		testFile := path.Join(serverDir, fmt.Sprintf("test-%v.txt", i))
+		testFileName := fmt.Sprintf("test-%v.txt", i)
+		testFileNames = append(testFileNames, testFileName)
+		testFile := path.Join(serverDir, testFileName)
 		testFiles = append(testFiles, testFile)
 		if _, err := os.Create(testFile); err != nil {
 			t.Errorf("failed to create file: %v", err)
@@ -294,11 +314,30 @@ func TestMaxItemsMetadata(t *testing.T) {
 		[]log.Option{log.WithProd(false)},
 		[]log.Option{log.WithProd(true)},
 	)
-	defer close()
-	if _, err := c.ListFileMetaData(""); err != nil {
-		t.Error(err)
+	defer func() {
+		removeTestFilesServer(t, testFileNames...)
+		close()
+	}()
+	resps, err := c.ListFileMetaData("")
+	if err != nil {
+		t.Errorf("ListFileMetaData failed = %v", err)
 	}
 
 	time.Sleep(10 * time.Second)
-	removeTestFiles(t, testFiles...)
+
+	itemFileNames := make([]string, 0)
+	for _, resp := range resps {
+		for _, item := range resp.Items {
+			itemFileNames = append(itemFileNames, item.FileName)
+		}
+	}
+
+	// also included from other tests
+	cmpTestFileNames := append(testFileNames, "test-1.jpg", "test-2.jpg", "test-3.jpg", "test-4.jpg")
+
+	sort.Strings(cmpTestFileNames)
+	sort.Strings(itemFileNames)
+	if !reflect.DeepEqual(cmpTestFileNames, itemFileNames) {
+		t.Errorf("file names not equal = %v, want = %v", spew.Sdump("\n", itemFileNames), spew.Sdump("\n", cmpTestFileNames))
+	}
 }
