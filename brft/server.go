@@ -46,7 +46,7 @@ type Server struct {
 
 func NewServer(
 	l *zap.Logger,
-	listen_addr string,
+	listenAddr string,
 	basePath string,
 	options *ServerOptions,
 ) (*Server, *net.UDPAddr, error) {
@@ -55,7 +55,7 @@ func NewServer(
 		opt = &ServerOptions{NewDefaultOptions(l)}
 	}
 
-	laddr, err := net.ResolveUDPAddr(opt.BtpOptions.Network, listen_addr)
+	laddr, err := net.ResolveUDPAddr(opt.BtpOptions.Network, listenAddr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -122,7 +122,7 @@ func (s *Server) ListenAndServe() error {
 			outCtrl: make(chan []byte, 100),
 			outData: make(chan []byte, 100),
 
-			options: s.options.ConnOptions,
+			options: s.options.ConnOptions.Clone(s.options.BtpLogger),
 		}
 
 		// handle the connection
@@ -744,6 +744,7 @@ func (c *Conn) handleMetaDataReq(metaReq messages.MetaReq) {
 			c.l.Debug("sending MetaDataResponses")
 		}
 
+		c.l.Debug("waiting")
 		// TODO: maybe introduce a high timeout (~ 10s)
 		// send the data to the sender routing
 		select {
@@ -752,5 +753,6 @@ func (c *Conn) handleMetaDataReq(metaReq messages.MetaReq) {
 			// we're only receiving the channel message, so no need to get proactive
 			return
 		}
+		c.l.Debug("done waiting")
 	}
 }

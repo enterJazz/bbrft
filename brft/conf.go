@@ -24,6 +24,16 @@ type ConnOptions struct {
 	BtpLogger  *zap.Logger
 }
 
+func (c ConnOptions) Clone(l *zap.Logger) ConnOptions {
+	return ConnOptions{
+		ignoreChecksumMissmatch: c.ignoreChecksumMissmatch,
+		compressionOptions:      c.compressionOptions,
+		chunkSizeFactor:         c.chunkSizeFactor,
+		activeStreamTimeout:     c.activeStreamTimeout,
+		BtpOptions:              c.BtpOptions.Clone(l),
+	}
+}
+
 func NewDefaultOptions(l *zap.Logger) ConnOptions {
 
 	return ConnOptions{

@@ -111,7 +111,7 @@ func (ls *Listener) dialMigratedConn(addr *net.UDPAddr) (c *Conn, err error) {
 		return nil, err
 	}
 
-	c = newConn(conn, *ls.options, ls.logger)
+	c = newConn(conn, ls.options.Clone(ls.logger), ls.logger)
 	c.isServerConnection = true
 
 	return

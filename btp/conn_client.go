@@ -60,6 +60,7 @@ func (c *Conn) completeClientHandshake(resp *messages.ConnAck) (err error) {
 		return
 	}
 	c.conn = newConn
+	c.logger = c.logger.With(zap.String("migrated", raddr.String()))
 
 	// send migration ack on new connection using server sequence number
 	c.sendAck(resp.ServerSeqNr)

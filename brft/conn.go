@@ -3,7 +3,6 @@ package brft
 import (
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	"gitlab.lrz.de/bbrft/brft/messages"
@@ -92,7 +91,7 @@ func (c *Conn) sendMessages(
 
 loop:
 	for {
-		time.Sleep(time.Nanosecond * 100) // TODO: Adjust
+		// time.Sleep(time.Nanosecond * 100) // TODO: Adjust
 		select {
 		case msg := <-outCtrl:
 			_, err := c.conn.Write(msg)

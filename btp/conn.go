@@ -35,6 +35,22 @@ type ConnOptions struct {
 	MaxRetransmits uint
 }
 
+func (c ConnOptions) Clone(l *zap.Logger) ConnOptions {
+	return ConnOptions{
+		Network:         c.Network,
+		Version:         c.Version,
+		MaxPacketSize:   c.MaxPacketSize,
+		MaxCwndSize:     c.MaxCwndSize,
+		InitCwndSize:    c.InitCwndSize,
+		IdleReadTimeout: c.IdleReadTimeout,
+		ReadBufferCap:   c.ReadBufferCap,
+		MaxRetransmits:  c.MaxRetransmits,
+		// TODO: match incoming CC type and create correct instance
+		// for now tihs should be fine
+		CC: congestioncontrol.NewElasticTcpAlgorithm(l, int(c.InitCwndSize), int(c.MaxCwndSize)),
+	}
+}
+
 func NewDefaultOptions(l *zap.Logger) *ConnOptions {
 	initCwndSize := 1
 	maxCwndSize := 25
@@ -615,8 +631,6 @@ runLoop:
 				if len(c.txPrioChan) == 0 && len(c.txChan) == 0 {
 					l.Debug("no outgoing messages closing")
 					break runLoop
-				} else {
-					l.Debug("transmitting remaining messages")
 				}
 			}
 
