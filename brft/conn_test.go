@@ -113,7 +113,7 @@ func TestTransfer(t *testing.T) {
 	testFile := "test-1.jpg"
 
 	l, c, close := setupTest(t,
-		[]log.Option{log.WithProd(true)}, // TODO: Re-vert
+		[]log.Option{log.WithProd(true)},
 		[]log.Option{log.WithProd(true)},
 	)
 	defer close()
@@ -126,7 +126,6 @@ func TestTransfer(t *testing.T) {
 	LogProgress(l, testFile, prog)
 }
 
-// TODO: Create separate tests for different chunk sizes
 func TestBigTransfer(t *testing.T) {
 	testFile := "video-1.mkv"
 

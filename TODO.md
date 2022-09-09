@@ -10,10 +10,8 @@
 - add checksum tests
 
 ## BRFT
-- Server must honor the offset set if it is a retransmit 
 - graceful shutdown of connections (michi)
     - the btp layer does not transmitt the brft.close packet, because the connection is closed immediately
-- TestBigTransfer reports that we have transfered more data than we actually advertised in the beginning
 - ListFileMetaData must return multiple MetaDataResps
     - therefore, they also need to be concatenated
 
@@ -56,3 +54,5 @@
 - it would have been nice to have a chunk size as part of the normal negotiation instead of giving the server free reign
 - we had no way to indicate if a MetaDataResp would be extended or not without holding more client state, making things messy
     -> we added a byte to the MetaResp to indicate whether the response is extended or not
+- didn't do multiple versions of files
+- the server does not read in all the checksums once, but rather computes on demand

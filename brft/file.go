@@ -23,7 +23,6 @@ var (
 	fileRegex, _ = regexp.Compile(`^([\w]|-|_)+([\.]([\w])+)?$`)
 )
 
-// TODO: maybe we should include the expected filesize to the client file
 type File struct {
 	l    *zap.Logger
 	f    *os.File
@@ -52,13 +51,16 @@ func NewFile(
 		err error
 	)
 
-	filePath := filepath.Join(basePath, name)
+	// ensure that the download directory exists
+	err = os.MkdirAll(basePath, os.ModePerm)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create base directory: %w", err)
+	}
 
+	filePath := filepath.Join(basePath, name)
 	// see if the file already exists. If so, load it otherwise create a new file
 	if _, err = os.Stat(filePath); errors.Is(err, os.ErrNotExist) {
 		if checksum == nil {
-			// TODO: make the client checks for the error it should then send the server a request without checksum and
-			//		later retry creating the file with a checksum given
 			l.Debug("file does not exist and no checksum is provided", zap.String("file_path", filePath))
 			return nil, err
 		}
@@ -126,7 +128,6 @@ func OpenFile(
 	}
 
 	if _, err := os.Stat(filepath.Join(basePath, name)); errors.Is(err, os.ErrNotExist) {
-		// TODO: make the server check for the error!
 		return nil, err
 	} else if err != nil {
 		return nil, err
@@ -138,7 +139,6 @@ func OpenFile(
 		return nil, err
 	}
 
-	// TODO: would be probably nicer to store the checksum somewhere
 	// compute the checksum
 	checksum, err := common.ComputeChecksum(f)
 	if err != nil {
@@ -172,6 +172,16 @@ func (f *File) Close() (err error) {
 	return nil
 }
 
+func (f *File) Remove() error {
+	if f != nil && f.f != nil {
+		if err := f.f.Close(); err != nil {
+			return fmt.Errorf("unable to close fd: %s", err)
+		}
+		return os.Remove(filepath.Join(f.basePath, f.name))
+	}
+	return nil
+}
+
 func (f *File) Read(b []byte) (n int, err error) {
 	return f.f.Read(b)
 }
@@ -180,12 +190,21 @@ func (f *File) Write(b []byte) (n int, err error) {
 	return f.f.Write(b)
 }
 
-// FIXME: on the client we will probably have to reload the stats
 // Size will return the (current) size of the underlying file. In case the file
 // is a client file, the actual size will be reduced by the size of the
 // additional information (e.g. checksum). Therefore only the size of the actual
 // file content will be returned
 func (f *File) Size() uint64 {
+	// Try to update the stat
+	if f.isClientFile {
+		fs, err := f.f.Stat()
+		if err != nil {
+			f.l.Error("unable to update client file stat", zap.Error(err))
+		} else {
+			f.stat = fs
+		}
+	}
+
 	s := uint64(f.stat.Size())
 	if f.isClientFile {
 		s -= uint64(len(fileSignature) + common.ChecksumSize)
@@ -214,7 +233,6 @@ func (f *File) Checksum() []byte {
 	return f.checksum
 }
 
-// TODO: Maybe combine with StripChecksum
 // CheckChecksum computes the checksum over the actual file content (i.e.
 // without signature and checksum). It then compares the computed checksum with
 // the previously advertised checksum set in f.checksum. If possible, the

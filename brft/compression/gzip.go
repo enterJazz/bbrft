@@ -18,7 +18,7 @@ func NewGzipCompressor(
 	l *zap.Logger,
 ) Compressor {
 	return &GzipCompressor{
-		l: l, // TODO: Extend logger
+		l: l.With(zap.String("component", "compression")),
 	}
 }
 

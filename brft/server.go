@@ -181,9 +181,6 @@ func (c *Conn) handleServerConnection() {
 					zap.String("stream_id", msg.StreamID.String()),
 				)
 
-				// TODO: Maybe we should remove the stream afterall. The peer
-				// 		will close the stream and our packets would just trigger
-				//		another Close packet
 				// cannot remove the stream since it does not exist - only can
 				// send a close message
 				c.sendClosePacket(msg.StreamID, messages.CloseReasonUndefined)
@@ -214,7 +211,7 @@ func (c *Conn) handleServerConnection() {
 			}
 
 			// validate incoming offset
-			if msg.Offset != 0 && msg.Offset >= uint64(s.f.stat.Size()) {
+			if msg.Offset != 0 && msg.Offset >= uint64(s.f.Size()) {
 				c.sendClosePacket(msg.StreamID, messages.CloseReasonInvalidOffset)
 				continue
 			} else {
@@ -258,7 +255,12 @@ func (c *Conn) handleServerConnection() {
 				zap.Uint8("type_encoding", uint8(h.MessageType)),
 				zap.String("type", h.MessageType.Name()),
 			)
-			// TODO: maybe close
+
+			// close whole connection since our peer clearly has sent a message he shouldn't have sent
+			closeConn(
+				fmt.Sprintf("%s[%d]", h.MessageType.Name(), h.MessageType),
+				errors.New("unexpected message type"),
+			)
 
 		default:
 			c.l.Error("unknown message type",
@@ -272,17 +274,8 @@ func (c *Conn) handleServerConnection() {
 	}
 }
 
-// TODO: Update comment
-// FIXME: actually use the channels
-// handleServerTransferNegotiation handles an incomming FileReq packet and
-// sends a FileResponse packet if possible. For this, a new stream is created
-// and added to the Conn. Since the client cannot create an association between
-// the FileRequest and FileResponse, it relies on the server to send back
-// FileResponses in the same order the FileRequests have been received.
-// Therefore, the server MUST processes them sequentially!
-// The function might close the stream and remove any information about it
-// remaining on the Conn if a non-critical error occurs. As such, only critical
-// errors that should lead to closing the whole btp.Conn are returned.
+// handleServerStream handles the complete life span of a stream from handling
+// an incomming FileReq packet to sending actual data.
 func (c *Conn) handleServerStream(s *stream) {
 
 	c.wg.Add(1)
@@ -396,7 +389,6 @@ func (c *Conn) handleServerStream(s *stream) {
 				break
 			}
 
-			// TODO: it would be nicer to have one compressor per Server
 			s.chunkSize = v.ChunkSize()
 
 			respOpt = messages.NewCompressionRespOptionalHeader(
@@ -411,11 +403,10 @@ func (c *Conn) handleServerStream(s *stream) {
 			if messages.FileRespStatusUnexpectedOptionalHeader.HasPrecedence(resp.Status) {
 				resp.Status = messages.FileRespStatusUnexpectedOptionalHeader
 			}
-			// TODO: maybe this should not be tollerated, since it indicates
-			// 		that something went wrong
 			// NOTE: according to our specs we could also close the
 			// connection, but let's give the client a chance to continue
 			// without the option
+
 		case *messages.UnknownOptionalHeader:
 			c.l.Error("got an unkown optional header type",
 				zap.String("dump", spew.Sdump("\n", opt)),
@@ -427,6 +418,7 @@ func (c *Conn) handleServerStream(s *stream) {
 			// NOTE: according to our specs we could also close the
 			// connection, but let's give the client a chance to continue
 			// without the option
+
 		default:
 			c.l.Error("unexpected optional header type [implementation error]",
 				zap.String("dump", spew.Sdump("\n", opt)),
@@ -466,7 +458,6 @@ func (c *Conn) handleServerStream(s *stream) {
 		s.l.Debug("sending FileResponse")
 	}
 
-	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
 	select {
 	case c.outCtrl <- data:
@@ -587,11 +578,10 @@ func (c *Conn) handleServerStream(s *stream) {
 		if DEBUG_PACKET_CONTENT {
 			s.l.Debug("sending Data packet",
 				zap.String("packet", spew.Sdump("\n", d)),
-				// TODO: re-enable zap.String("packet_encoded", spew.Sdump("\n", data)),
+				//zap.String("packet_encoded", spew.Sdump("\n", data)),
 			)
 		}
 
-		// TODO: maybe introduce a high timeout (~ 10s)
 		// send the data to the sender routing
 		select {
 		case c.outData <- data:
@@ -600,7 +590,6 @@ func (c *Conn) handleServerStream(s *stream) {
 			return
 		}
 
-		// TODO: Somehow we send more data than we initially advertised
 		s.updateProgress(len(d.Data), dLen)
 
 		if lastPacket {
@@ -745,7 +734,6 @@ func (c *Conn) handleMetaDataReq(metaReq messages.MetaReq) {
 		}
 
 		c.l.Debug("waiting")
-		// TODO: maybe introduce a high timeout (~ 10s)
 		// send the data to the sender routing
 		select {
 		case c.outCtrl <- data:

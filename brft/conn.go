@@ -45,7 +45,6 @@ type Conn struct {
 	outCtrl chan []byte
 	outData chan []byte
 
-	// TODO: make sure the options are used
 	options ConnOptions
 }
 
@@ -91,7 +90,6 @@ func (c *Conn) sendMessages(
 
 loop:
 	for {
-		// time.Sleep(time.Nanosecond * 100) // TODO: Adjust
 		select {
 		case msg := <-outCtrl:
 			_, err := c.conn.Write(msg)
@@ -148,7 +146,6 @@ func (c *Conn) sendClosePacket(s messages.StreamID, r messages.CloseReason) {
 		return
 	}
 
-	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
 	// NOTE: Since the Close packet is also used to signalize that a download
 	// has been completed, it cannot be sent on the Ctrl channel. Otherwise, the
@@ -212,7 +209,6 @@ func (c *Conn) readMsg() (msg messages.BRFTMessage, h messages.PacketHeader, err
 	}
 
 	// actually decode the packet
-	// TODO: probably remove the timeout - I think we can't because otherwise the connection will forever be idle waiting for remaining bytes
 	err = msg.Decode(c.l, cyberbyte.NewString(c.conn, cyberbyte.DefaultTimeout))
 	if err != nil {
 		err = fmt.Errorf("unable to decode %s: %w", msg.Name(), err)

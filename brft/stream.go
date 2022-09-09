@@ -9,21 +9,17 @@ import (
 )
 
 type Progress struct {
-	TotalBytes uint64
-	// TODO: Alternatively, we should create another channel that transmitts all of
-	// the relevant information after the handshake is finished
+	TotalBytes       uint64
 	TransmittedBytes uint64
 }
 
-// TODO: Add a close for the stream
 // create a new connection object
 type stream struct {
 	l *zap.Logger
 
 	id messages.StreamID
 
-	// TODO: all of the below needs to be initialized in the server handling
-	// file
+	// information about the file
 	f                 *File
 	fileName          string // only needed during neogtiation
 	requestedChecksum []byte // only needed during neogtiation
@@ -54,12 +50,11 @@ func (s *stream) updateProgress(lenTransmitted int, lenDecoded int) {
 	s.totalTransmitted += uint64(lenTransmitted)
 	s.totalPayloadTransmitted += uint64(lenDecoded)
 
-	if s.totalTransmitted > s.totalSize {
+	if s.totalPayloadTransmitted > s.totalSize {
 		s.l.Warn("progress is beyound file size",
 			zap.Uint64("len_advertised", s.totalSize),
-			zap.Uint64("len_received", s.totalTransmitted),
+			zap.Uint64("len_received", s.totalPayloadTransmitted),
 		)
-		// TODO: should we close the stream?
 	}
 
 	// try to send the current progress
@@ -83,12 +78,9 @@ func (s *stream) updateProgress(lenTransmitted int, lenDecoded int) {
 	}
 }
 
-// TODO: maybe simply make this the close on the stream
-//   - that's not so easy, since we'd have to move the wg and more improtantly streams & streamsMu to the stream...
-//
-// CloseStream will send a close message to the other peer indicating that the
-// stream should be closed. It also removes the stream from conn.streams.
-// HOWEVER, it does not remove any streams from conn.reqStreams
+// CloseStream cleans up the stream and removes the stream from Conn.streams.
+// (optionally) it will also send a close message to the other peer indicating
+// that the stream should be closed.
 func (c *Conn) CloseStream(
 	s *stream,
 	sendClosePacket bool,
@@ -113,9 +105,6 @@ func (c *Conn) CloseStream(
 	c.streamsMu.Unlock()
 
 	// close the file
-	// TODO: if we want to keep all file checksums in memory on the server this
-	//		would have to be copied to Conn.Close() as well (add a if case on
-	//		isClient)
 	err := s.f.Close()
 	if err != nil {
 		s.l.Error("unable to close file associated with stream", zap.Error(err))

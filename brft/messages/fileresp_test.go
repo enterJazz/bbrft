@@ -30,7 +30,7 @@ func TestFileRespEncodeDecode(t *testing.T) {
 		// TODO: Add more test cases.
 		{"valid-1", FileResp{
 			Status:     FileRespStatusOk,
-			OptHeaders: OptionalHeaders{},
+			OptHeaders: OptionalHeaders{NewCompressionRespOptionalHeader(CompressionRespHeaderStatusOk)},
 			StreamID:   StreamID(12345),
 			FileSize:   uint64(1234567890),
 			Checksum:   make([]byte, common.ChecksumSize),

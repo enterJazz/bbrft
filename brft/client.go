@@ -17,11 +17,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// TODO: move
-const (
-	serverAddrStr = "127.0.0.1:1337"
-)
-
 type DownloadInfo struct {
 	ProgChan    <-chan Progress
 	StartOffset uint64
@@ -36,7 +31,7 @@ func Dial(
 ) (*Conn, error) {
 	c := &Conn{
 		l:        l.With(FPeer("brft_client")),
-		basePath: downloadDir, // TODO: Make sure that it actually exists / create it
+		basePath: downloadDir,
 		isClient: true,
 		streams:  make(map[messages.StreamID]*stream, 100),
 
@@ -106,9 +101,7 @@ func (c *Conn) ListFileMetaData(
 	c.metaDataRequestMu.Unlock()
 
 	l.Debug("sent MetaDataRequest")
-	// TODO: maybe remove on send error
 
-	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
 	select {
 	case c.outCtrl <- data:
@@ -238,9 +231,10 @@ func (c *Conn) DownloadFile(
 	}
 
 	// handle compression
-	if c.options.GetPreferredCompression() != messages.CompressionReqHeaderAlgorithmReserved {
+	comp := c.options.GetPreferredCompression()
+	if comp != nil {
 		h := messages.NewCompressionReqOptionalHeader(
-			c.options.GetPreferredCompression(),
+			*comp,
 			uint8(c.options.chunkSizeFactor),
 		)
 		req.OptHeaders = append(req.OptHeaders, h)
@@ -260,7 +254,6 @@ func (c *Conn) DownloadFile(
 		)
 	}
 
-	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
 	select {
 	case c.outCtrl <- data:
@@ -385,7 +378,12 @@ func (c *Conn) handleClientConnection() {
 				zap.Uint8("type_encoding", uint8(h.MessageType)),
 				zap.String("type", h.MessageType.Name()),
 			)
-			// TODO: maybe close
+
+			// close whole connection since our peer clearly has sent a message he shouldn't have sent
+			closeConn(
+				fmt.Sprintf("%s[%d]", h.MessageType.Name(), h.MessageType),
+				errors.New("unexpected message type"),
+			)
 
 		default:
 			c.l.Error("unknown message type",
@@ -400,15 +398,9 @@ func (c *Conn) handleClientConnection() {
 	}
 }
 
-// TODO: update comment
-// handleClientTransferNegotiation handles an incomming FileResp packet and
-// sends a StartTransmission packet if possible. It uses the stream saved in
-// c.reqStreams[0]. Because of this is has to be made sure that the streams are
-// added to c.reqStreams in the same order that they are sent to the server and
-// that the server processes them sequentially as well!
-// The function might close the stream and remove any information about it
-// remaining on the Conn if a non-critical error occurs. As such, only critical
-// errors that should lead to closing the whole btp.Conn are returned.
+// handleClientStream handles the complete life span of a stream
+// from handling an incomming FileResp packet, receiving actual data, writing it
+// to the file to making sure the file has the expected checksum
 func (c *Conn) handleClientStream(s *stream) {
 
 	c.wg.Add(1)
@@ -454,7 +446,6 @@ func (c *Conn) handleClientStream(s *stream) {
 	// set & check the checksum
 	if !bytes.Equal(s.requestedChecksum, make([]byte, common.ChecksumSize)) &&
 		!bytes.Equal(s.requestedChecksum, resp.Checksum) {
-		// TODO: potentially add a dialogue to allow the resumption of the download
 		s.l.Error("checksums do not match",
 			zap.String("requestedChecksum", spew.Sdump("\n", s.requestedChecksum)),
 			zap.String("checksum", spew.Sdump("\n", s.f.Checksum())),
@@ -511,7 +502,7 @@ func (c *Conn) handleClientStream(s *stream) {
 		}
 	}
 
-	// TODO: Create the file - is there a way to allocate the memory?
+	// create the file
 	var err error
 	s.f, err = NewFile(s.l, s.fileName, c.basePath, resp.Checksum)
 	if err != nil {
@@ -561,7 +552,6 @@ func (c *Conn) handleClientStream(s *stream) {
 		s.l.Debug("sending StartTransmission")
 	}
 
-	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
 	select {
 	case c.outCtrl <- data:
@@ -575,8 +565,7 @@ func (c *Conn) handleClientStream(s *stream) {
 
 	s.l.Info("handshake done")
 
-	// FIXME: Add decompression
-	// TODO: Start waiting for Data packets
+	// start waiting for Data packets
 	for {
 		var msg messages.BRFTMessage
 
@@ -607,6 +596,7 @@ func (c *Conn) handleClientStream(s *stream) {
 			}
 			decodedLen := len(data)
 
+			// write the data to the file
 			n, err := s.f.Write(data)
 			if err != nil {
 				s.l.Error("unable to write to file",
@@ -626,6 +616,7 @@ func (c *Conn) handleClientStream(s *stream) {
 				return
 			}
 
+			// update the progress for the CLI
 			s.updateProgress(dLen, decodedLen)
 
 		case *messages.Close:
@@ -649,7 +640,11 @@ func (c *Conn) handleClientStream(s *stream) {
 						zap.String("actual_checksum", spew.Sdump("\n", computedChecksum)),
 					)
 
-					// TODO: maybe remove the file
+					// remove the file if the checksum is not the same as expected
+					err := s.f.Remove()
+					if err != nil {
+						s.l.Error("unable to remove incorrect file", zap.Error(err))
+					}
 					return
 				} else {
 					s.l.Debug("downloaded file checksum matches",

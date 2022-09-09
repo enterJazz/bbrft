@@ -38,7 +38,8 @@ func NewDefaultOptions(l *zap.Logger) ConnOptions {
 
 	return ConnOptions{
 		ignoreChecksumMissmatch: false,
-		compressionOptions:      []messages.CompressionReqHeaderAlgorithm{messages.CompressionReqHeaderAlgorithmGzip},
+		// compressionOptions:      nil,
+		compressionOptions: []messages.CompressionReqHeaderAlgorithm{messages.CompressionReqHeaderAlgorithmGzip},
 
 		chunkSizeFactor: 0,
 
@@ -48,11 +49,10 @@ func NewDefaultOptions(l *zap.Logger) ConnOptions {
 	}
 }
 
-func (c ConnOptions) GetPreferredCompression() messages.CompressionReqHeaderAlgorithm {
+func (c ConnOptions) GetPreferredCompression() *messages.CompressionReqHeaderAlgorithm {
 	if c.compressionOptions == nil || len(c.compressionOptions) == 0 {
-		// FIXME: we should have a different default here
-		return messages.CompressionReqHeaderAlgorithmReserved
+		return nil
 	}
 
-	return c.compressionOptions[0]
+	return &c.compressionOptions[0]
 }

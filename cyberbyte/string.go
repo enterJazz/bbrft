@@ -23,7 +23,9 @@ import (
 	"fmt"
 	"io"
 	"time"
-) // TODO: Maybe it's possible to enforce to use a deadline
+)
+
+// TODO: Remove timeout- it's not used
 // String represents a string of bytes. It provides methods for parsing
 // fixed-length and length-prefixed values from it.
 type String struct {
@@ -31,7 +33,7 @@ type String struct {
 	timeout time.Duration
 }
 
-const DefaultTimeout time.Duration = time.Millisecond
+const DefaultTimeout time.Duration = time.Second
 
 func NewString(r io.Reader, t time.Duration) *String {
 	return &String{
@@ -40,7 +42,6 @@ func NewString(r io.Reader, t time.Duration) *String {
 	}
 }
 
-// TODO: Should probably be adjusted once in a while to some updated RTT related value
 func (s *String) UpdateTimeout(t time.Duration) {
 	s.timeout = t
 }
@@ -120,7 +121,7 @@ func (s *String) ReadUint64(out *uint64) error {
 	return nil
 }
 
-// TODO: See where this is needed
+// NOTE: not needed by us
 // func (s *String) readUnsigned(out *uint32, length int) error {
 // 	v := s.read(length)
 // 	if v == nil {
@@ -135,7 +136,6 @@ func (s *String) ReadUint64(out *uint64) error {
 // 	return true
 // }
 
-// FIXME: This must be adapted
 func (s *String) readLengthPrefixed(lenLen int, outChild *[]byte) error {
 	lenBytes, err := s.read(lenLen)
 	if err != nil {
@@ -162,7 +162,7 @@ func (s *String) ReadUint8LengthPrefixed(out *String) error {
 	if err != nil {
 		return err
 	}
-	*out = *NewString(bytes.NewReader(b), s.timeout) // TODO: Probably do a deadline instead
+	*out = *NewString(bytes.NewReader(b), s.timeout)
 	return nil
 }
 
@@ -175,7 +175,7 @@ func (s *String) ReadUint16LengthPrefixed(out *String) error {
 	if err != nil {
 		return err
 	}
-	*out = *NewString(bytes.NewReader(b), s.timeout) // TODO: Probably do a deadline instead
+	*out = *NewString(bytes.NewReader(b), s.timeout)
 	return nil
 }
 
@@ -188,7 +188,7 @@ func (s *String) ReadUint24LengthPrefixed(out *String) error {
 	if err != nil {
 		return err
 	}
-	*out = *NewString(bytes.NewReader(b), s.timeout) // TODO: Probably do a deadline instead
+	*out = *NewString(bytes.NewReader(b), s.timeout)
 	return nil
 }
 
@@ -237,7 +237,7 @@ func (s *String) CopyBytes(out []byte) error {
 	return nil
 }
 
-// TODO: I guess there is no way to do this anymore
+// NOTE: there is no way to do this using the reader
 // Empty reports whether the string does not contain any bytes.
 // func (s String) Empty() bool {
 // 	return len(s) == 0
