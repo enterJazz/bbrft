@@ -16,6 +16,9 @@ import (
 func main() {
 	args, err := cli.ParseArgs()
 	if err != nil {
+		if err == cli.HelpError {
+			os.Exit(2)
+		}
 		fmt.Printf("failed to parse args: %v\n", err)
 		os.Exit(1)
 	}

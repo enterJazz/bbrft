@@ -15,6 +15,8 @@ import (
 
 type OperationMode int
 
+var HelpError error = errors.New("helpErr")
+
 const (
 	Server OperationMode = iota
 	Client
@@ -206,6 +208,9 @@ func ParseArgs() (*Args, error) {
 	}
 
 	if optionArgs == nil {
+		if len(os.Args) >= 2 && (os.Args[len(os.Args)-1] == "help" || os.Args[len(os.Args)-1] == "h") {
+			return nil, HelpError
+		}
 		return nil, errors.New("error parsing args: given command unknown")
 	}
 
