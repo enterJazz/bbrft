@@ -8,6 +8,13 @@ import (
 	"go.uber.org/zap"
 )
 
+type Progress struct {
+	TotalBytes uint64
+	// TODO: Alternatively, we should create another channel that transmitts all of
+	// the relevant information after the handshake is finished
+	TransmittedBytes uint64
+}
+
 // TODO: Add a close for the stream
 // create a new connection object
 type stream struct {
@@ -23,9 +30,13 @@ type stream struct {
 
 	// progress channel transmitting the percentage of the overall progress.
 	// Will beclose when the transfer is complete / canceled
-	totalSize        uint64
+	totalSize uint64
+	// total data bytes transmiited over stream (raw bytes received including compression)
 	totalTransmitted uint64
-	progress         chan float32
+	// total number of decoded (if compression is enabled) bytes
+	// if no compression enabled equals totalTransmitted
+	totalPayloadTransmitted uint64
+	progress                chan Progress
 
 	// compression
 	comp      compression.Compressor
@@ -37,6 +48,39 @@ type stream struct {
 
 	// handle incomming and outgoing messages
 	in chan messages.BRFTMessage
+}
+
+func (s *stream) updateProgress(lenTransmitted int, lenDecoded int) {
+	s.totalTransmitted += uint64(lenTransmitted)
+	s.totalPayloadTransmitted += uint64(lenDecoded)
+
+	if s.totalTransmitted > s.totalSize {
+		s.l.Warn("progress is beyound file size",
+			zap.Uint64("len_advertised", s.totalSize),
+			zap.Uint64("len_received", s.totalTransmitted),
+		)
+		// TODO: should we close the stream?
+	}
+
+	// try to send the current progress
+	prog := Progress{
+		TotalBytes:       s.totalSize,
+		TransmittedBytes: s.totalPayloadTransmitted,
+	}
+	select {
+	case s.progress <- prog:
+	default:
+		// try to read the first value and append the new one
+		select {
+		case <-s.progress:
+			s.l.Warn("dropped progress entry")
+			select {
+			case s.progress <- prog:
+			default:
+			}
+		default:
+		}
+	}
 }
 
 // TODO: maybe simply make this the close on the stream
@@ -64,7 +108,7 @@ func (c *Conn) CloseStream(
 		delete(c.streams, s.id)
 	}
 
-	// TODO: Probably shutdown the client if this was the last active stream
+	allFinished := len(c.streams) == 0
 
 	c.streamsMu.Unlock()
 
@@ -85,6 +129,17 @@ func (c *Conn) CloseStream(
 	if sendClosePacket {
 		c.l.Debug("sending close packet to peer", zap.String("reason", r.String()))
 		c.sendClosePacket(s.id, r)
+	}
+
+	// reset BTP read timeout to normal after all streams are closed
+	// close BRFT client after all streams finished
+	if allFinished {
+		c.conn.ResetReadTimeout()
+
+		// IDEA: close connections when no more open streams
+		if c.isClient {
+			c.Close()
+		}
 	}
 }
 

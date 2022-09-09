@@ -1,6 +1,8 @@
 package brft
 
 import (
+	"time"
+
 	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/btp"
 	"go.uber.org/zap"
@@ -15,7 +17,21 @@ type ConnOptions struct {
 
 	chunkSizeFactor uint8
 
-	btpOptions btp.ConnOptions
+	// read timeout for BTP connection while trying to read stream messages (client only)
+	activeStreamTimeout time.Duration
+
+	BtpOptions btp.ConnOptions
+	BtpLogger  *zap.Logger
+}
+
+func (c ConnOptions) Clone(l *zap.Logger) ConnOptions {
+	return ConnOptions{
+		ignoreChecksumMissmatch: c.ignoreChecksumMissmatch,
+		compressionOptions:      c.compressionOptions,
+		chunkSizeFactor:         c.chunkSizeFactor,
+		activeStreamTimeout:     c.activeStreamTimeout,
+		BtpOptions:              c.BtpOptions.Clone(l),
+	}
 }
 
 func NewDefaultOptions(l *zap.Logger) ConnOptions {
@@ -26,7 +42,9 @@ func NewDefaultOptions(l *zap.Logger) ConnOptions {
 
 		chunkSizeFactor: 0,
 
-		btpOptions: *btp.NewDefaultOptions(l),
+		activeStreamTimeout: time.Second * 20,
+
+		BtpOptions: *btp.NewDefaultOptions(l),
 	}
 }
 

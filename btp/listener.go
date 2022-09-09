@@ -18,6 +18,11 @@ type Listener struct {
 	logger *zap.Logger
 }
 
+// Accept accepts new incoming BTP connections
+// after initial handshake the server creates a new
+// UDP connection and all further client communications
+// are handled there.
+// This method blocks
 func (ls *Listener) Accept() (*Conn, error) {
 	l := ls.logger
 	c, err := ls.doServerHandshake()
@@ -29,6 +34,9 @@ func (ls *Listener) Accept() (*Conn, error) {
 	return c, nil
 }
 
+// Listen listens for incomming BTP connection requests on the provided UDPAddress
+// Accept must be called to accept new incomming connections,
+// without calling accept no client connections will be accepted.
 func Listen(options ConnOptions, laddr *net.UDPAddr, logger *zap.Logger) (l *Listener, err error) {
 	conn, err := net.ListenUDP(options.Network, laddr)
 	if err != nil {
@@ -39,10 +47,12 @@ func Listen(options ConnOptions, laddr *net.UDPAddr, logger *zap.Logger) (l *Lis
 		conn:    conn,
 		options: &options,
 		laddr:   laddr,
-		logger:  logger.Named("listener").With(zap.String("ip", conn.LocalAddr().String())),
+		logger:  logger.Named("listener"),
 	}, nil
 }
 
+// recvConnFrom handles connections incomming from clients
+// this method parses the initial conn request message
 func (l *Listener) recvConnFrom() (msg *messages.Conn, addr *net.UDPAddr, err error) {
 	msg = &messages.Conn{}
 
@@ -68,6 +78,7 @@ func (l *Listener) recvConnFrom() (msg *messages.Conn, addr *net.UDPAddr, err er
 	return
 }
 
+// create a server connection response and merge connection options
 func (ls *Listener) createConnResp(conn *net.UDPConn, req *messages.Conn) (resp *messages.ConnAck, err error) {
 	resp = &messages.ConnAck{
 		PacketHeader: messages.PacketHeader{
@@ -111,14 +122,13 @@ func (ls *Listener) dialMigratedConn(addr *net.UDPAddr) (c *Conn, err error) {
 		return nil, err
 	}
 
-	c = newConn(conn, *ls.options, ls.logger)
+	c = newConn(conn, ls.options.Clone(ls.logger), ls.logger)
 	c.isServerConnection = true
 
 	return
 }
 
 func (ls *Listener) doServerHandshake() (c *Conn, err error) {
-	// TODO: only read messages from new parties here
 	req, raddr, err := ls.recvConnFrom()
 	if err != nil {
 		return
@@ -150,6 +160,17 @@ func (ls *Listener) doServerHandshake() (c *Conn, err error) {
 
 	// transmit ConnAck on incomming conennection
 	// client must respond to the new port
+	_, err = ls.conn.WriteToUDP(buf, raddr)
+	if err != nil {
+		return nil, err
+	}
+	//  transmit initial packet 3 times
+	// since congestion no lost packet tracking is performed before
+	// connection migration was completed
+	_, err = ls.conn.WriteToUDP(buf, raddr)
+	if err != nil {
+		return nil, err
+	}
 	_, err = ls.conn.WriteToUDP(buf, raddr)
 	if err != nil {
 		return nil, err

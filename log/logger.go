@@ -12,6 +12,7 @@ type Options struct {
 	color         bool
 	prettyNewLine bool
 	prod          bool
+	client        bool
 }
 
 func NewOptions() *Options {
@@ -19,6 +20,7 @@ func NewOptions() *Options {
 		color:         true,
 		prettyNewLine: true,
 		prod:          false,
+		client:        false,
 	}
 }
 
@@ -36,6 +38,12 @@ func WithProd(v bool) Option {
 	}
 }
 
+func WithClient(v bool) Option {
+	return func(o *Options) {
+		o.client = v
+	}
+}
+
 // TODO: Add option for log level
 
 func NewLogger(opts ...Option) (*zap.Logger, error) {
@@ -47,6 +55,13 @@ func NewLogger(opts ...Option) (*zap.Logger, error) {
 	conf := zap.NewDevelopmentConfig()
 	if o.prod {
 		conf = zap.NewProductionConfig()
+	}
+
+	// if production client make logs human readable
+	if o.client {
+		conf.Encoding = "console"
+		conf.EncoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("15:04:05.000000")
+		conf.EncoderConfig.EncodeDuration = zapcore.StringDurationEncoder
 	}
 
 	if o.color {

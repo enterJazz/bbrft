@@ -1,25 +1,24 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
-	"sync"
 
 	"gitlab.lrz.de/bbrft/brft"
 	"gitlab.lrz.de/bbrft/cli"
+	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
 
 func main() {
-	args := cli.ParseArgs()
-	// FIXME: ParseArgs should ret err
-	// FIXME: calling binary without correct input shows goroutine and SIGSEGV
-	if args == nil {
-		os.Exit(0)
+	args, err := cli.ParseArgs()
+	if err != nil {
+		fmt.Printf("failed to parse args: %v\n", err)
+		os.Exit(1)
 	}
-
-	args.L, _ = zap.NewProduction()
+	// FIXME: calling binary without correct input shows goroutine and SIGSEGV
 
 	switch args.OperationArgs.GetOperationMode() {
 	case cli.Client:
@@ -29,86 +28,141 @@ func main() {
 	}
 }
 
-// FIXME: @michi or wlad robert, wlad was tired and lazy and just diplicated progress bar from test, we should make this pretty
-const (
-	minProgressDelta float32 = 0.05
-)
+func getLoggers(testMode bool, isClient bool) (cliLogger *zap.Logger, btpLogger *zap.Logger, brftLogger *zap.Logger, err error) {
+	debug := testMode || os.Getenv("DEBUG") == "true"
+	btpDebug := debug || os.Getenv("DEBUG_BTP") == "true"
+	brftDebug := debug || os.Getenv("DEBUG_BRFT") == "true"
 
-func logProgress(l *zap.Logger, filename string, ch <-chan float32) {
-	logMultipleProgresses(l, map[string]<-chan float32{filename: ch})
-}
-
-func logMultipleProgresses(l *zap.Logger, chs map[string]<-chan float32) {
-	wg := sync.WaitGroup{}
-	for filename, ch := range chs {
-		filename, ch := filename, ch // https://golang.org/doc/faq#closures_and_goroutines
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			var prevProgress float32 = 0.0
-			for {
-				if prog, ok := <-ch; ok {
-					//if prog > prevProgress {
-					if prog > prevProgress+minProgressDelta {
-						fmt.Println("current progress", filename, prog)
-						prevProgress = prog
-					}
-				} else {
-					return
-				}
-			}
-		}()
+	cliLogger, err = log.NewLogger(
+		log.WithClient(true),
+		log.WithColor(true),
+		log.WithProd(!debug),
+	)
+	if err != nil {
+		return
 	}
 
-	wg.Wait()
+	btpLogger, err = log.NewLogger(
+		log.WithClient(true),
+		log.WithColor(true),
+		log.WithProd(!btpDebug),
+	)
+	if err != nil {
+		return
+	}
+
+	brftLogger, err = log.NewLogger(
+		log.WithClient(true),
+		log.WithColor(true),
+		log.WithProd(!brftDebug),
+	)
+	if err != nil {
+		return
+	}
+
+	return
 }
 
 func runClient(args *cli.Args) {
+	cliLog, btpLog, brftLog, err := getLoggers(args.TestMode, true)
+	if err != nil {
+		panic(err)
+	}
+
 	cArgs := args.OperationArgs.(*cli.ClientArgs)
 	// connect to server
-	optD := brft.NewDefaultOptions(args.L)
-	c, err := brft.Dial(args.L, cArgs.ServerAddr, cArgs.DownloadDir, &optD)
+	optD := brft.NewDefaultOptions(brftLog)
+	optD.BtpLogger = btpLog
+
+	c, err := brft.Dial(brftLog, cArgs.ServerAddr, cArgs.DownloadDir, &optD)
 	if err != nil {
-		args.L.Fatal("failed to connect to server", zap.Error(err))
+		cliLog.Fatal("failed to connect to server", zap.Error(err))
+	}
+
+	getSingleKeyValPair := func(m map[string][]byte) (f string, cs []byte, err error) {
+		if len(m) != 1 {
+			return "", nil, errors.New("given map does not exactly contain a single k:v pair")
+		}
+		for k, v := range m {
+			f = k
+			cs = v
+		}
+		return
 	}
 
 	switch cArgs.Command {
 	case cli.FileRequest:
-		progs, err := c.DownloadFiles([]string{cArgs.FileName})
-		if err != nil {
-			args.L.Fatal("failed to download file", zap.Error(err))
+		fmt.Println("starting download")
+		// case single download
+		if len(cArgs.DownloadFiles) == 1 {
+			f, cs, err := getSingleKeyValPair(cArgs.DownloadFiles)
+			if err != nil {
+				cliLog.Fatal("error parsing files", zap.Error(err))
+			}
+			prog, err := c.DownloadFile(f, cs)
+			if err != nil {
+				cliLog.Fatal("failed to download file", zap.Error(err))
+			} else {
+				brft.LogProgress(cliLog, f, prog)
+			}
+		} else {
+			progs, err := c.DownloadFiles(cArgs.DownloadFiles)
+			if err != nil {
+				cliLog.Fatal("failed to download files", zap.Error(err))
+			}
+
+			brft.LogMultipleProgresses(cliLog, progs)
 		}
-		fmt.Println("download starting")
-		logMultipleProgresses(args.L, progs)
 	case cli.MetaDataRequest:
-		resp, err := c.ListFileMetaData(cArgs.FileName)
+		f, _, err := getSingleKeyValPair(cArgs.DownloadFiles)
 		if err != nil {
-			args.L.Fatal("failed to fetch file metadata", zap.Error(err))
+			cliLog.Fatal("error parsing files", zap.Error(err))
 		}
 
-		fmt.Println("files available on server:")
-		fmt.Println("--------------------------")
-		for _, item := range resp.Items {
-			if item.FileSize != nil {
-				fmt.Printf("%s %dB %x \n", item.FileName, *item.FileSize, item.Checksum)
-			} else {
-				fmt.Printf("%s\n", item.FileName)
+		resps, err := c.ListFileMetaData(f)
+		if err != nil {
+			cliLog.Fatal("failed to fetch file metadata", zap.Error(err))
+		}
+		c.Close()
+
+		// case MetaDataReq lists server dir
+		if f != "" {
+			fmt.Println("files available on server:")
+			fmt.Println("--------------------------")
+		} else {
+			fmt.Printf("file details of %s\n", f)
+			fmt.Println("--------------------------")
+		}
+		for _, resp := range resps {
+			for _, item := range resp.Items {
+				if item.FileSize != nil {
+					fmt.Printf("%s %dB %x \n", item.FileName, *item.FileSize, item.Checksum)
+				} else {
+					fmt.Printf("%s\n", item.FileName)
+				}
 			}
 		}
 	}
 }
 
 func runServer(args *cli.Args) {
+	cliLog, btpLog, brftLog, err := getLoggers(args.TestMode, false)
+	if err != nil {
+		panic(err)
+	}
+
 	sArgs := args.OperationArgs.(*cli.ServerArgs)
 	// TODO: should this be parameterized? or set by env var?
 	lAddr := "0.0.0.0:" + strconv.Itoa(sArgs.Port)
 
-	opt := &brft.ServerOptions{brft.NewDefaultOptions(args.L)}
-	s, _, err := brft.NewServer(args.L, lAddr, sArgs.ServeDir, opt)
+	opt := &brft.ServerOptions{brft.NewDefaultOptions(brftLog)}
+	opt.BtpLogger = btpLog
+
+	s, _, err := brft.NewServer(brftLog, lAddr, sArgs.ServeDir, opt)
 	if err != nil {
-		args.L.Fatal("failed to create server", zap.Error(err))
+		cliLog.Fatal("failed to create server", zap.Error(err))
 	}
 	if err := s.ListenAndServe(); err != nil {
-		args.L.Fatal("server failed during execution", zap.Error(err))
+		cliLog.Fatal("server failed during execution", zap.Error(err))
 	}
 }

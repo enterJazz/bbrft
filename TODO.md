@@ -1,11 +1,22 @@
 # TODO
-- go through the requirements
-- go over the feedback of the prof
+- write a readme
+- improve the comments
+
+@robert
+- close btp
+- cli extra files DONE
+- fix metadatareq
+- maybe README
+- add checksum tests
 
 ## BRFT
-- create some kind of callBack/channel that allows to signal the completion of the download (michi)
 - Server must honor the offset set if it is a retransmit 
 - graceful shutdown of connections (michi)
+    - the btp layer does not transmitt the brft.close packet, because the connection is closed immediately
+- TestBigTransfer reports that we have transfered more data than we actually advertised in the beginning
+- ListFileMetaData must return multiple MetaDataResps
+    - therefore, they also need to be concatenated
+
 
 - client-server tests
     - simple test for negotiation
@@ -15,10 +26,17 @@
     - multiple concurrent downloads
     - connection migration
     - stress test with A LOT of downloads
+    - metadatareq/resp with more than 255 items
+    - multiple concurrent downloads over multiple connections
+
+## Requirements
+- must be able to recover from connection drops
+- command line: allow multiple files for concurrent download
 
 ## MetaData
 - Do we allow recursive directories on the server?
     - not defined in specs -> no
+- wait for 255 following values @robert
 
 ### Nice to haves
 - add a maximum number of streams per connection/peer
@@ -27,6 +45,8 @@
 
 ## CLI
 - add cli support for enabling/disabling compression
+- add cli support for multiple files (in devel branch) @robert DONE
+- add logger customization
 
 # Notes
 - not so nice that we can not link a FileReq & FileResp, but have to rely on the order that responses are sent

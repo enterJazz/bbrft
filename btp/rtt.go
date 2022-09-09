@@ -62,8 +62,8 @@ func (r *RTTMeasurement) RTO() time.Duration {
 	// RTO <- SRTT + max (G, K*RTTVAR)
 	rto := r.srtt + 4*r.rttvar
 
-	if rto < 500*time.Millisecond {
-		return 500 * time.Millisecond
+	if rto < 400*time.Millisecond {
+		return 400 * time.Millisecond
 	}
 	return rto
 }

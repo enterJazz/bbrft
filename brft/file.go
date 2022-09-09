@@ -8,10 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"gitlab.lrz.de/bbrft/brft/common"
 	shared "gitlab.lrz.de/bbrft/brft/common"
-	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
 
@@ -19,6 +19,8 @@ var fileSignature = []byte{42, 52, 46, 54, 31} // "BRFT1" i.e. BRFT file version
 
 var (
 	ErrNoClientFile = errors.New("file is no client file")
+
+	fileRegex, _ = regexp.Compile(`^([\w]|-|_)+([\.]([\w])+)?$`)
 )
 
 // TODO: maybe we should include the expected filesize to the client file
@@ -44,7 +46,7 @@ func NewFile(
 	// checksum (optional)
 	checksum []byte,
 ) (*File, error) {
-	l = l.With(log.FComponent("file"))
+	l = l.With(FComponent("file"))
 	var (
 		f   *os.File
 		err error
@@ -78,7 +80,7 @@ func NewFile(
 	} else if err != nil {
 		return nil, err
 	} else {
-		l.Info("opening existing file", zap.String("file_path", filePath))
+		l.Debug("opening existing file", zap.String("file_path", filePath))
 
 		// get a file desciptor
 		f, err = os.OpenFile(filePath, os.O_RDWR, 0755)
@@ -89,14 +91,23 @@ func NewFile(
 		// read the checksum
 		checksum, err = readChecksum(f)
 		if err != nil {
-			return nil, fmt.Errorf("unable to read checksum: %w", err)
+			l.Debug("failed to read checksum", zap.Error(err))
+			return nil, ErrInvalidChecksum
 		}
+
+		// seek end of file
+		f.Seek(0, io.SeekEnd)
+	}
+
+	fs, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("cannot get file stats: %w", err)
 	}
 
 	return &File{
-		l: l,
-		f: f,
-		// FIXME: stat: fs,
+		l:            l,
+		f:            f,
+		stat:         fs,
 		isClientFile: true,
 		name:         name,
 		basePath:     basePath,
@@ -104,12 +115,16 @@ func NewFile(
 	}, nil
 }
 
-// FIXME: Make sure the name matches the regex
 // OpenFile opens the requested file. It should be used by the server
 func OpenFile(
 	name string,
 	basePath string,
 ) (*File, error) {
+	ok := fileRegex.Match([]byte(name))
+	if !ok {
+		return nil, fmt.Errorf("filename %s fails BRFT regex check", name)
+	}
+
 	if _, err := os.Stat(filepath.Join(basePath, name)); errors.Is(err, os.ErrNotExist) {
 		// TODO: make the server check for the error!
 		return nil, err
@@ -178,6 +193,23 @@ func (f *File) Size() uint64 {
 	return s
 }
 
+// SeekOffset moves the file reader to the byte defined by offset
+// depending in isClientFile this will include brft file header
+func (f *File) SeekOffset(offset uint64) error {
+
+	internalOffset := offset
+	if f.isClientFile {
+		internalOffset += uint64(len(fileSignature) + common.ChecksumSize)
+	}
+
+	if offset > f.Size() {
+		return errors.New("invalid offset: offset is larger then payload")
+	}
+
+	_, err := f.f.Seek(int64(offset), io.SeekStart)
+	return err
+}
+
 func (f *File) Checksum() []byte {
 	return f.checksum
 }
@@ -236,9 +268,8 @@ func (f *File) StripChecksum() error {
 		return err
 	}
 
-	// TODO: FIXME:
-	// write the remainder of the file to a temporary file
-	tmpFile, err := os.CreateTemp("../test/downloads/", "*.brft")
+	// write temporary file next to the current file
+	tmpFile, err := os.CreateTemp(f.basePath, "*.brft")
 	if err != nil {
 		return err
 	}

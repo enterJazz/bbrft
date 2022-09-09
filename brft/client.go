@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"math"
 	"net"
 	"strconv"
 	"sync"
@@ -14,7 +13,6 @@ import (
 	"gitlab.lrz.de/bbrft/brft/compression"
 	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/btp"
-	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -24,6 +22,12 @@ const (
 	serverAddrStr = "127.0.0.1:1337"
 )
 
+type DownloadInfo struct {
+	ProgChan    <-chan Progress
+	StartOffset uint64
+	Checksum    []byte
+}
+
 func Dial(
 	l *zap.Logger,
 	addr string, // server address
@@ -31,7 +35,7 @@ func Dial(
 	options *ConnOptions,
 ) (*Conn, error) {
 	c := &Conn{
-		l:        l.With(log.FPeer("brft_client")),
+		l:        l.With(FPeer("brft_client")),
 		basePath: downloadDir, // TODO: Make sure that it actually exists / create it
 		isClient: true,
 		streams:  make(map[messages.StreamID]*stream, 100),
@@ -53,7 +57,12 @@ func Dial(
 		return nil, fmt.Errorf("unable to resolve server address: %w", err)
 	}
 
-	c.conn, err = btp.Dial(c.options.btpOptions, nil, raddr, l)
+	btpLogger := l
+	if c.options.BtpLogger != nil {
+		btpLogger = c.options.BtpLogger
+	}
+
+	c.conn, err = btp.Dial(c.options.BtpOptions, nil, raddr, btpLogger)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create connection: %w", err)
 	}
@@ -67,7 +76,7 @@ func Dial(
 // should be performed single threaded as waits for metaDataResp on connection in lock-step fashion
 func (c *Conn) ListFileMetaData(
 	fileName string,
-) (*messages.MetaResp, error) {
+) ([]*messages.MetaResp, error) {
 	if !c.isClient {
 		return nil, ErrExpectedClientConnection
 	}
@@ -109,61 +118,70 @@ func (c *Conn) ListFileMetaData(
 		return nil, fmt.Errorf("channel closed before MetaDataRequest finished")
 	}
 
+	// TODO: handle extended
 	// wait for response
-	resp := <-req_ref.resp_chan
-	if resp.err != nil {
-		return nil, resp.err
+	// TODO: if resp more than 255 items: loop @robert; also add some test
+	resps := make([]*messages.MetaResp, 0)
+	for {
+		resp := <-req_ref.resp_chan
+		if resp.err != nil {
+			return nil, resp.err
+		}
+		resps = append(resps, &resp.resp)
+		// check if 255 items; else break loop
+		if len(resp.resp.Items) < messages.MaxMetaItemsNum {
+			break
+		}
 	}
 
-	return &resp.resp, nil
+	return resps, nil
 }
 
-func (c *Conn) DownloadFiles(fileNames []string) (map[string]<-chan float32, error) {
-	if len(fileNames) == 0 {
+func (c *Conn) DownloadFiles(fNameChecksumMap map[string][]byte) (map[string]*DownloadInfo, error) {
+	if len(fNameChecksumMap) == 0 {
 		return nil, errors.New("no files give")
 	}
 
 	g := new(errgroup.Group)
 	mu := sync.Mutex{}
-	progs := make(map[string]<-chan float32, len(fileNames))
-	for _, f := range fileNames {
+	infos := make(map[string]*DownloadInfo, len(fNameChecksumMap))
+	for f, cs := range fNameChecksumMap {
 		f := f // https://golang.org/doc/faq#closures_and_goroutines
+		cs := cs
 		g.Go(func() error {
-			prog, err := c.DownloadFile(f)
+			info, err := c.DownloadFile(f, cs)
 			if err != nil {
 				return err
 			}
 
 			mu.Lock()
-			progs[f] = prog
+			infos[f] = info
 			mu.Unlock()
 
 			return nil
 		})
 	}
 
-	return progs, g.Wait()
+	return infos, g.Wait()
 }
 
+// DownloadFile starts a donwload on the provided BRFT connection
 func (c *Conn) DownloadFile(
 	fileName string,
-) (<-chan float32, error) {
+	checksum []byte,
+) (info *DownloadInfo, err error) {
+	l := c.l.With(zap.String("filename", fileName))
+
 	if !c.isClient {
 		return nil, ErrExpectedClientConnection
 	}
+	if checksum == nil {
+		checksum = make([]byte, common.ChecksumSize)
+	} else if len(checksum) != common.ChecksumSize {
+		return nil, ErrInvalidChecksum
+	}
 
-	c.l.Info("initiating new dowload")
-
-	// TODO: See if this is a resumption (maybe make some kind of dialoge)
-	// resumption := false
-	// if resumption {
-	// 	req.Flags = append(req.Flags, messages.FileReqFlagResumption)
-	// 	req.Checksum = make([]byte, common.ChecksumSize)
-
-	// 	var offset uint64 = 0
-	// 	s.offset = offset
-	// 	s.isResumption = true
-	// }
+	c.l.Info("initiating new download")
 
 	// create a new request
 	sid := c.newStreamID()
@@ -175,7 +193,7 @@ func (c *Conn) DownloadFile(
 		FileName: fileName,
 		// Checksum is the checksum of a previous partial download or if a specific
 		// file version shall be requested. Might be unitilized or zeroed.
-		Checksum: make([]byte, common.ChecksumSize),
+		Checksum: checksum,
 	}
 
 	s := &stream{
@@ -183,13 +201,40 @@ func (c *Conn) DownloadFile(
 			zap.String("file_name", fileName),
 			zap.Uint16("stream_id", uint16(sid)),
 		),
-		id:                sid,
-		fileName:          fileName,
-		progress:          make(chan float32, 100),
+		id:       sid,
+		fileName: fileName,
+		// channel that returns the current progress of stream in decoded bytes
+		progress:          make(chan Progress, 100),
 		requestedChecksum: req.Checksum,
-		//isResumption: , TODO: set
-		//offset: , TODO: set
-		in: make(chan messages.BRFTMessage, 50),
+		in:                make(chan messages.BRFTMessage, 50),
+	}
+
+	// check if file already exists for resumption
+	clientFile, err := NewFile(c.l, fileName, c.basePath, nil)
+	if err != nil {
+		// if file has no checksum assume its not a BRFT file -> some other file exists
+		if errors.Is(err, ErrInvalidChecksum) {
+			return nil, fmt.Errorf("file already exists")
+		}
+
+		l.Debug("no existing file found", zap.Error(err))
+	}
+
+	// prepare resumption if local file found
+	if clientFile != nil {
+		l.Debug("found previous download progress, resuming", zap.Binary("checksum", clientFile.checksum), zap.Uint64("size", clientFile.Size()))
+
+		// prepare request to remote
+		req.Flags = append(req.Flags, messages.FileReqFlagResumption)
+		req.Checksum = clientFile.checksum
+
+		// update local stream offsets
+		s.offset = clientFile.Size()
+		// add already decoded filesize to transmitted counter
+		s.totalPayloadTransmitted = clientFile.Size()
+		s.isResumption = true
+
+		clientFile.Close()
 	}
 
 	// handle compression
@@ -208,15 +253,21 @@ func (c *Conn) DownloadFile(
 		return nil, fmt.Errorf("unable to encode FileRequest: %w", err)
 	}
 
-	s.l.Debug("sending FileRequest",
-		zap.String("packet", spew.Sdump("\n", req)),
-		zap.String("packet_encoded", spew.Sdump("\n", data)),
-	)
+	if DEBUG_PACKET_CONTENT {
+		s.l.Debug("sending FileRequest",
+			zap.String("packet", spew.Sdump("\n", req)),
+			zap.String("packet_encoded", spew.Sdump("\n", data)),
+		)
+	}
 
-	// write the encoded message
-	_, err = c.conn.Write(data)
-	if err != nil {
-		return nil, fmt.Errorf("unable to encode FileRequest: %w", err)
+	// TODO: maybe introduce a high timeout (~ 10s)
+	// send the data to the sender routing
+	select {
+	case c.outCtrl <- data:
+	case <-c.close:
+		// we're only receiving the channel message, so no need to get proactive
+		c.l.Warn("channel got closed during active MetaDataRequest")
+		return nil, fmt.Errorf("channel closed before MetaDataRequest finished")
 	}
 
 	// add the stream to map of streams
@@ -227,7 +278,13 @@ func (c *Conn) DownloadFile(
 	// start handling of the stream
 	go c.handleClientStream(s)
 
-	return s.progress, nil
+	l.Info("stream started")
+
+	return &DownloadInfo{
+		ProgChan:    s.progress,
+		StartOffset: s.offset,
+		Checksum:    s.requestedChecksum,
+	}, nil
 }
 
 // NOTE: This function can only run in a single thread, since we always need to
@@ -313,7 +370,10 @@ func (c *Conn) handleClientConnection() {
 				resp: *msg,
 				err:  nil,
 			}
-			c.metaDataRequests = c.metaDataRequests[1:]
+			// check if resp contains max item count (255): then another resp should follow; else none should follow
+			if len(msg.Items) < messages.MaxMetaItemsNum {
+				c.metaDataRequests = c.metaDataRequests[1:]
+			}
 
 			c.metaDataRequestMu.Unlock()
 
@@ -357,8 +417,8 @@ func (c *Conn) handleClientStream(s *stream) {
 
 	// update the stream
 	s.l = s.l.With(
-		zap.String("remote_addr", c.conn.LocalAddr().String()),
-		zap.String("local_addr", c.conn.RemoteAddr().String()),
+		zap.String("remote_addr", c.conn.RemoteAddr().String()),
+		zap.String("local_addr", c.conn.LocalAddr().String()),
 		zap.Bool("client_conn", true),
 	)
 
@@ -491,11 +551,15 @@ func (c *Conn) handleClientStream(s *stream) {
 		return
 	}
 
-	s.l.Debug("sending StartTransmission",
-		zap.String("file_response", spew.Sdump("\n", resp)),
-		zap.String("packet", spew.Sdump("\n", st)),
-		zap.String("packet_encoded", spew.Sdump("\n", data)),
-	)
+	if DEBUG_PACKET_CONTENT {
+		s.l.Debug("sending StartTransmission",
+			zap.String("file_response", spew.Sdump("\n", resp)),
+			zap.String("packet", spew.Sdump("\n", st)),
+			zap.String("packet_encoded", spew.Sdump("\n", data)),
+		)
+	} else {
+		s.l.Debug("sending StartTransmission")
+	}
 
 	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
@@ -505,6 +569,11 @@ func (c *Conn) handleClientStream(s *stream) {
 		c.CloseStream(s, false, 0)
 		return
 	}
+
+	// decrease connection timeout of BTP layer
+	c.conn.SetReadTimeout(c.options.activeStreamTimeout)
+
+	s.l.Info("handshake done")
 
 	// FIXME: Add decompression
 	// TODO: Start waiting for Data packets
@@ -520,6 +589,7 @@ func (c *Conn) handleClientStream(s *stream) {
 
 		switch m := msg.(type) {
 		case *messages.Data:
+			c.conn.SetReadTimeout(c.options.activeStreamTimeout)
 			// (optionally) decompress the data
 			data := m.Data
 			dLen := len(m.Data)
@@ -535,6 +605,7 @@ func (c *Conn) handleClientStream(s *stream) {
 					return
 				}
 			}
+			decodedLen := len(data)
 
 			n, err := s.f.Write(data)
 			if err != nil {
@@ -555,32 +626,7 @@ func (c *Conn) handleClientStream(s *stream) {
 				return
 			}
 
-			s.totalTransmitted += uint64(dLen)
-
-			if s.totalTransmitted > s.totalSize {
-				s.l.Warn("already received more data than advertised",
-					zap.Uint64("len_advertised", s.totalSize),
-					zap.Uint64("len_received", s.totalTransmitted),
-				)
-				// TODO: should we close the stream?
-			}
-
-			// try to send the current progress
-			prog := float32(math.Min(1.0, (float64(s.totalTransmitted) / float64(s.totalSize))))
-			select {
-			case s.progress <- prog:
-			default:
-				// try to read the first value and append the new one
-				select {
-				case <-s.progress:
-					s.l.Warn("dropped progress entry")
-					select {
-					case s.progress <- prog:
-					default:
-					}
-				default:
-				}
-			}
+			s.updateProgress(dLen, decodedLen)
 
 		case *messages.Close:
 			// clean up the stream after finishing the file

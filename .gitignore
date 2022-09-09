@@ -37,3 +37,6 @@ test/downloads
 ### ignore common big file formats
 *.mp4
 *.mkv
+
+# ignore produced binary
+/bbrft
