@@ -31,6 +31,9 @@ go.work
 ### GoLand ###
 .idea/
 
+### Ignore test fragments ###
+test/downloads
+
 ### ignore common big file formats
 *.mp4
 *.mkv

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 
@@ -16,6 +17,9 @@ func main() {
 	if args == nil {
 		os.Exit(0)
 	}
+
+	args.L, _ = zap.NewProduction()
+
 	switch args.OperationArgs.GetOperationMode() {
 	case cli.Client:
 		runClient(args)
@@ -23,6 +27,11 @@ func main() {
 		runServer(args)
 	}
 }
+
+// FIXME: @michi or wlad robert, wlad was tired and lazy and just diplicated progress bar from test, we should make this pretty
+const (
+	minProgressDelta float32 = 0.05
+)
 
 func runClient(args *cli.Args) {
 	cArgs := args.OperationArgs.(*cli.ClientArgs)
@@ -35,14 +44,26 @@ func runClient(args *cli.Args) {
 
 	switch cArgs.Command {
 	case cli.FileRequest:
+		fmt.Println("starting download")
 		if prog, err := c.DownloadFile(cArgs.FileName); err != nil {
 			args.L.Fatal("failed to download file", zap.Error(err))
 		} else {
 			brft.LogProgress(args.L, cArgs.FileName, prog)
 		}
 	case cli.MetaDataRequest:
-		if err := c.ListFileMetaData(cArgs.FileName); err != nil {
+		resp, err := c.ListFileMetaData(cArgs.FileName)
+		if err != nil {
 			args.L.Fatal("failed to fetch file metadata", zap.Error(err))
+		}
+
+		fmt.Println("files available on server:")
+		fmt.Println("--------------------------")
+		for _, item := range resp.Items {
+			if item.FileSize != nil {
+				fmt.Printf("%s %dB %x \n", item.FileName, *item.FileSize, item.Checksum)
+			} else {
+				fmt.Printf("%s\n", item.FileName)
+			}
 		}
 	}
 }

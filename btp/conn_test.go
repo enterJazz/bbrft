@@ -6,6 +6,7 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -276,7 +277,7 @@ func (m *MitM) getTargetSock(connector bool) *net.UDPConn {
 }
 
 func setupDefaultConn(t *testing.T) (cl_c, s_c *Conn) {
-	l, err := zap.NewDevelopment()
+	l, err := zap.NewProduction()
 	if err != nil {
 		t.Fatal("unable to initialize logger")
 	}
@@ -286,7 +287,7 @@ func setupDefaultConn(t *testing.T) (cl_c, s_c *Conn) {
 }
 
 func setupLossyConn(t *testing.T, dropProb, outOfOrderProb float64) (cl_c, s_c *Conn) {
-	l, err := zap.NewDevelopment()
+	l, err := zap.NewProduction()
 	if err != nil {
 		t.Fatal("unable to initialize logger")
 	}
@@ -410,7 +411,7 @@ func TestLossyLargeComm(t *testing.T) {
 
 // tests simple read / write between connections
 func testLargeComm(t *testing.T, client, server *Conn) {
-	testPayload := make([]byte, 2*1024*1024)
+	testPayload := make([]byte, 200*1024*1024)
 	_, err := rand.Read(testPayload)
 	if err != nil {
 		t.Errorf("rand.Read() failed: %v", err)
@@ -445,6 +446,48 @@ func testLargeComm(t *testing.T, client, server *Conn) {
 		t.Errorf("Read() failed: %v", err)
 	}
 	fmt.Printf("Client -> Server transfer speed %.2f Mbit/Sec \n", float64(len(testPayload)/1024/1024)/(float64(time.Since(startTime))/float64(time.Second))*8)
+}
+
+func TestMultistreamInput(t *testing.T) {
+	fmt.Println("test22")
+	client, server := setupDefaultConn(t)
+	numParallel := 5
+	chunkSize := 64 * 1024
+	numReaders := 2
+
+	var readWg sync.WaitGroup
+	var writeWg sync.WaitGroup
+
+	for i := 0; i < numReaders; i++ {
+		readWg.Add(1)
+		idx := i
+		go func() {
+			readBuf := make([]byte, chunkSize)
+			defer readWg.Done()
+			if _, err := client.Read(readBuf); err != nil {
+				t.Errorf("client.Read() failed: %v", err)
+			}
+			fmt.Println("reader done", idx)
+		}()
+	}
+
+	for i := 0; i < numParallel; i++ {
+		writeWg.Add(1)
+		idx := i
+		go func() {
+			defer writeWg.Done()
+			writeBuf := make([]byte, chunkSize)
+			if _, err := server.Write(writeBuf); err != nil {
+				t.Errorf("server.Write() %d failed: %v", idx, err)
+			}
+			fmt.Println("worker done", idx)
+		}()
+	}
+
+	writeWg.Wait()
+	readWg.Wait()
+
+	fmt.Println("completed")
 }
 
 func TestParallelDataTransfer(t *testing.T) {

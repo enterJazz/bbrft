@@ -32,6 +32,8 @@ type Server struct {
 	listener *btp.Listener
 	numConns int
 
+	listen_addr *net.UDPAddr
+
 	// base path to the directory where the files are located
 	basePath string
 
@@ -60,10 +62,11 @@ func NewServer(
 	}
 
 	return &Server{
-		l:        l.With(log.FPeer("brft_server")),
-		listener: listener,
-		basePath: basePath,
-		options:  *opt,
+		l:           l.With(log.FPeer("brft_server")),
+		listener:    listener,
+		basePath:    basePath,
+		listen_addr: laddr,
+		options:     *opt,
 	}, laddr, nil
 }
 
@@ -74,7 +77,7 @@ func (s *Server) Close() error {
 
 func (s *Server) ListenAndServe() error {
 	// listen for incomming connections
-	s.l.Debug("listening for incomming connections")
+	s.l.Info("listening for incomming connections", zap.String("addr", s.listen_addr.String()))
 
 	for {
 		conn, err := s.listener.Accept()

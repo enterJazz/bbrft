@@ -1,0 +1,12 @@
+# ignore all files irrelevant for build
+.idea
+.tui
+.dockerignore
+.gitlab-ci.yml
+brft-client
+brft-server
+README.md
+run.log
+Dockerfile
+TODO.md
+test
