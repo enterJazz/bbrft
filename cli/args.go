@@ -47,6 +47,17 @@ func ParseArgs() (*Args, error) {
 				Usage:   "enables debug/test mode",
 			},
 		},
+		CommandNotFound: func(cCtx *cli.Context, command string) {
+			fmt.Fprintf(cCtx.App.Writer, "command not found: %q\n", command)
+		},
+		OnUsageError: func(cCtx *cli.Context, err error, isSubcommand bool) error {
+			if isSubcommand {
+				return err
+			}
+
+			fmt.Fprintf(cCtx.App.Writer, "ERROR: %#v\n", err)
+			return nil
+		},
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() == 0 {
 				return errors.New("no Command specified; use Command `help` to view available commands")
@@ -182,6 +193,10 @@ func ParseArgs() (*Args, error) {
 
 	if err := app.Run(os.Args); err != nil {
 		return nil, err
+	}
+
+	if optionArgs == nil {
+		return nil, errors.New("error parsing args: given command unknown")
 	}
 
 	args := Args{
