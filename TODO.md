@@ -7,6 +7,7 @@
 - cli extra files
 - fix metadatareq
 - maybe README
+- add checksum tests
 
 ## BRFT
 - Server must honor the offset set if it is a retransmit 

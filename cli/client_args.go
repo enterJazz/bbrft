@@ -9,10 +9,8 @@ const (
 
 type ClientArgs struct {
 	Command ClientCommand
-	// checksum of to-be-fetched file; nil if none specified
-	Checksum string
-	// target file name of operation; nil if none specified
-	FileName string
+	// map of target file name(s) with corresponding checksum (nil if none given) of operation; nil if none specified
+	DownloadFiles map[string][]byte
 	// dir in which requested files are stored
 	DownloadDir string
 	// target server address of operation
