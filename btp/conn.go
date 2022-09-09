@@ -580,14 +580,18 @@ func (c *Conn) run() error {
 		l.Debug("receive loop stopped")
 	}()
 
+	var terminationChannel <-chan time.Time
+	shouldTerminate := false
+
 runLoop:
 	for {
 		select {
 		// Close immediately if requested
 		case closeErr = <-c.closeChan:
-			l.Error("connection loop terminated", zap.Error(closeErr))
-			c.teardown()
-			break runLoop
+			l.Debug("received close req")
+			// leave transmission some time to terminate
+			shouldTerminate = true
+			terminationChannel = time.After(time.Second * 5)
 		case prio_msg := <-c.txPrioChan:
 			_, err := c.transmit(prio_msg)
 			// TODO: maybe take care of failed transmissions due to connection problems
@@ -596,6 +600,26 @@ runLoop:
 				l.Error("message handling error", zap.Error(err))
 			}
 		default:
+		}
+
+		if shouldTerminate {
+			select {
+			// leave some time
+			case <-terminationChannel:
+				l.Debug("timeout reached closing")
+				// leave some time to transmit remaining data before
+				// closing connection
+				break runLoop
+			default:
+				// if we have nothing to send instantly stop
+				if len(c.txPrioChan) == 0 && len(c.txChan) == 0 {
+					l.Debug("no outgoing messages closing")
+					break runLoop
+				} else {
+					l.Debug("transmitting remaining messages")
+				}
+			}
+
 		}
 
 		if c.Options.CC.NumFreeSend() > 0 {
@@ -617,8 +641,10 @@ runLoop:
 			return err
 		}
 	}
-
-	l.Debug("run loop stopped")
+	l.Debug("run loop terminated", zap.Error(closeErr))
+	l.Debug("terminating", zap.Error(closeErr))
+	c.teardown()
+	l.Debug("cleaning up finished")
 
 	return closeErr
 }

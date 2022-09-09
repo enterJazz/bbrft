@@ -123,6 +123,7 @@ func runClient(args *cli.Args) {
 		if err != nil {
 			cliLog.Fatal("failed to fetch file metadata", zap.Error(err))
 		}
+		c.Close()
 
 		// case MetaDataReq lists server dir
 		if f != "" {

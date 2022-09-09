@@ -118,7 +118,6 @@ func (ls *Listener) dialMigratedConn(addr *net.UDPAddr) (c *Conn, err error) {
 }
 
 func (ls *Listener) doServerHandshake() (c *Conn, err error) {
-	// TODO: only read messages from new parties here
 	req, raddr, err := ls.recvConnFrom()
 	if err != nil {
 		return
