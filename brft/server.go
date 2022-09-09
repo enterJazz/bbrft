@@ -690,7 +690,7 @@ func (c *Conn) handleMetaDataReq(metaReq messages.MetaReq) {
 		}
 
 		name := f.f.Name()
-		size := uint64(f.stat.Size())
+		size := f.Size()
 		checksum := f.Checksum()
 		metaItem, err := messages.NewMetaItem(
 			name,

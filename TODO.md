@@ -5,6 +5,8 @@
 ## BRFT
 - Server must honor the offset set if it is a retransmit 
 - graceful shutdown of connections (michi)
+    - the btp layer does not transmitt the brft.close packet, because the connection is closed immediately
+- TestBigTransfer reports that we have transfered more data than we actually advertised in the beginning
 
 - client-server tests
     - simple test for negotiation
