@@ -34,11 +34,18 @@ func (c ConnOptions) Clone(l *zap.Logger) ConnOptions {
 	}
 }
 
-func NewDefaultOptions(l *zap.Logger) ConnOptions {
+func NewDefaultOptions(l *zap.Logger, useCompression bool) ConnOptions {
+
+	var comprOpts []messages.CompressionReqHeaderAlgorithm
+	if useCompression {
+		comprOpts = []messages.CompressionReqHeaderAlgorithm{messages.CompressionReqHeaderAlgorithmGzip}
+	} else {
+		comprOpts = nil
+	}
 
 	return ConnOptions{
 		ignoreChecksumMissmatch: false,
-		compressionOptions:      []messages.CompressionReqHeaderAlgorithm{messages.CompressionReqHeaderAlgorithmGzip},
+		compressionOptions:      comprOpts,
 
 		chunkSizeFactor: 0,
 
