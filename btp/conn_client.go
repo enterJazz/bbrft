@@ -31,8 +31,6 @@ func (c *Conn) initiateClientHandshake() (err error) {
 func (c *Conn) completeClientHandshake(resp *messages.ConnAck) (err error) {
 	l := c.logger.Named("handshake").With(zap.String("remote_addr", c.conn.RemoteAddr().String()))
 
-	// TODO: handle server and client sequence numbers here
-
 	if resp.ActualInitCwndSize > c.Options.InitCwndSize {
 		return ErrInvalidHandshakeOption("ActualInitCwndSize")
 	}

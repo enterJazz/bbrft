@@ -155,7 +155,8 @@ func TestConcurrentDownloadAndMetaDataRequest(t *testing.T) {
 		f := f // https://golang.org/doc/faq#closures_and_goroutines
 
 		g.Go(func() error {
-			return c.ListFileMetaData(f)
+			_, err = c.ListFileMetaData(f)
+			return err
 		})
 	}
 
@@ -192,11 +193,11 @@ func TestMetaData(t *testing.T) {
 		[]log.Option{log.WithProd(true)},
 	)
 	defer close()
-	if err := c.ListFileMetaData(""); err != nil {
+	if _, err := c.ListFileMetaData(""); err != nil {
 		t.Error(err)
 	}
 
-	if err := c.ListFileMetaData(testFile); err != nil {
+	if _, err := c.ListFileMetaData(testFile); err != nil {
 		t.Error(err)
 	}
 

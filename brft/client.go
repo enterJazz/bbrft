@@ -109,6 +109,7 @@ func (c *Conn) ListFileMetaData(
 		return nil, fmt.Errorf("channel closed before MetaDataRequest finished")
 	}
 
+	// TODO: handle extended
 	// wait for response
 	resp := <-req_ref.resp_chan
 	if resp.err != nil {
