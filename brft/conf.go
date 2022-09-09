@@ -1,6 +1,8 @@
 package brft
 
 import (
+	"time"
+
 	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/btp"
 	"go.uber.org/zap"
@@ -15,6 +17,9 @@ type ConnOptions struct {
 
 	chunkSizeFactor uint8
 
+	// read timeout for BTP connection while trying to read stream messages (client only)
+	activeStreamTimeout time.Duration
+
 	BtpOptions btp.ConnOptions
 	BtpLogger  *zap.Logger
 }
@@ -26,6 +31,8 @@ func NewDefaultOptions(l *zap.Logger) ConnOptions {
 		compressionOptions:      []messages.CompressionReqHeaderAlgorithm{messages.CompressionReqHeaderAlgorithmGzip},
 
 		chunkSizeFactor: 0,
+
+		activeStreamTimeout: time.Second * 20,
 
 		BtpOptions: *btp.NewDefaultOptions(l),
 	}

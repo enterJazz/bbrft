@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -21,12 +22,17 @@ type ConnOptions struct {
 	// The maximum number of bytes to send in a single packet.
 	Version       messages.ProtocolVersion
 	MaxPacketSize uint16
-	// TODO: move to CC
+
 	MaxCwndSize  uint8
 	InitCwndSize uint8
 	CC           congestioncontrol.CongestionControlAlgorithm
 
+	// default read timeout duration
+	IdleReadTimeout time.Duration
+
 	ReadBufferCap uint
+	// number of retransmits that can be send before assuming connection is broken
+	MaxRetransmits uint
 }
 
 func NewDefaultOptions(l *zap.Logger) *ConnOptions {
@@ -44,7 +50,11 @@ func NewDefaultOptions(l *zap.Logger) *ConnOptions {
 		MaxCwndSize:  uint8(maxCwndSize),
 		CC:           congestioncontrol.NewElasticTcpAlgorithm(l, initCwndSize, maxCwndSize),
 
+		IdleReadTimeout: time.Minute * 2,
+
 		ReadBufferCap: 2048,
+
+		MaxRetransmits: 20,
 	}
 }
 
@@ -98,6 +108,8 @@ type Conn struct {
 	inflightPackets       map[PacketNumber]*packet // packets currently awaiting acknowledgements
 
 	logger *zap.Logger
+
+	currentReadTimeout time.Duration
 }
 
 func Dial(options ConnOptions, laddr *net.UDPAddr, raddr *net.UDPAddr, l *zap.Logger) (c *Conn, err error) {
@@ -202,54 +214,6 @@ func (c *Conn) LocalAddr() net.Addr {
 	return c.conn.LocalAddr()
 }
 
-// TODO: accoring to our rfc the BRFT layer is not concerned with timeouts. maybe remove timeouts again
-// SetDeadline implements the Conn SetDeadline method.
-//
-// SetDeadline sets the read and write deadlines associated
-// with the connection. It is equivalent to calling both
-// SetReadDeadline and SetWriteDeadline.
-//
-// A deadline is an absolute time after which I/O operations
-// fail instead of blocking. The deadline applies to all future
-// and pending I/O, not just the immediately following call to
-// Read or Write. After a deadline has been exceeded, the
-// connection can be refreshed by setting a deadline in the future.
-//
-// If the deadline is exceeded a call to Read or Write or to other
-// I/O methods will return an error that wraps os.ErrDeadlineExceeded.
-// This can be tested using errors.Is(err, os.ErrDeadlineExceeded).
-// The error's Timeout method will return true, but note that there
-// are other possible errors for which the Timeout method will
-// return true even if the deadline has not been exceeded.
-//
-// An idle timeout can be implemented by repeatedly extending
-// the deadline after successful Read or Write calls.
-//
-// A zero value for t means I/O operations will not time out.
-func (c *Conn) SetDeadline(t time.Time) error {
-	return c.conn.SetDeadline(t)
-}
-
-// SetReadDeadline implements the Conn SetReadDeadline method.
-//
-// SetReadDeadline sets the deadline for future Read calls
-// and any currently-blocked Read call.
-// A zero value for t means Read will not time out.
-func (c *Conn) SetReadDeadline(t time.Time) error {
-	return c.conn.SetReadDeadline(t)
-}
-
-// SetWriteDeadline implements the Conn SetWriteDeadline method.
-//
-// SetWriteDeadline sets the deadline for future Write calls
-// and any currently-blocked Write call.
-// Even if write times out, it may return n > 0, indicating that
-// some of the data was successfully written.
-// A zero value for t means Write will not time out.
-func (c *Conn) SetWriteDeadline(t time.Time) error {
-	return c.conn.SetWriteDeadline(t)
-}
-
 // Close will close a connection
 // NOTE: it should be only used by higher layers tearing down the connection
 func (c *Conn) Close() error {
@@ -271,6 +235,8 @@ func newConn(conn *net.UDPConn, options ConnOptions, l *zap.Logger) *Conn {
 		// TODO: use some better buffer defaults
 		sequentialDataReader: NewDataReader(100, 50),
 	}
+
+	c.currentReadTimeout = options.IdleReadTimeout
 
 	gen, err := NewRandomNumberGenerator()
 	if err != nil {
@@ -396,6 +362,8 @@ func (c *Conn) recv() (msg messages.Codable, err error) {
 
 	// l := c.logger
 	buf := make([]byte, c.Options.ReadBufferCap)
+
+	c.conn.SetReadDeadline(time.Now().Add(c.currentReadTimeout))
 
 	n, err := c.conn.Read(buf)
 	if err != nil {
@@ -591,6 +559,11 @@ func (c *Conn) run() error {
 			default:
 				msg, err := c.recv()
 				if err != nil {
+					if errors.Is(err, os.ErrDeadlineExceeded) {
+						closeErr = err
+						c.logger.Error("failed to read", zap.Error(err))
+						c.closeChan <- err
+					}
 					// TODO: ignore close connection during port migration process
 					// c.logger.Error("could not read msg", zap.Error(err))
 					continue
@@ -637,9 +610,7 @@ runLoop:
 				// l.Debug("no outgoing messages")
 			}
 		}
-		// l.Debug("handle retransmit 1")
 		err := c.proccessRetransmission()
-		// l.Debug("handle retransmit 2")
 		if err != nil {
 			return err
 		}
@@ -665,7 +636,7 @@ func (c *Conn) proccessRetransmission() error {
 			l.Warn("failed to retransmit", FSequenceNumber(p.seqNr), zap.Error(err))
 		}
 
-		if p.retransmits > 2 {
+		if p.retransmits > c.Options.MaxRetransmits {
 			return errors.New("connection broken: too many retransmitts")
 		}
 	}
@@ -690,10 +661,24 @@ func (c *Conn) processAck(h messages.PacketHeader) error {
 			c.Options.CC.UpdateRTT(int(c.rttMeasurement.srtt))
 		}
 	} else {
-		l.Warn("got Ack for unknown packet", zap.Uint16("ack_seq_nr", h.SeqNr), FSequenceNumber(c.packetNumberGenerator.Peek()))
+		c.Options.CC.HandleEvent(congestioncontrol.Duplicate)
+		l.Warn("got duplicate ack", zap.Uint16("ack_seq_nr", h.SeqNr), FSequenceNumber(c.packetNumberGenerator.Peek()))
 	}
 
 	return nil
+}
+
+// SetReadDeadline implements the Conn SetReadDeadline method.
+//
+// SetReadDeadline sets the deadline for future Read calls
+// and any currently-blocked Read call.
+// A zero value for t means Read will not time out.
+func (c *Conn) SetReadTimeout(t time.Duration) {
+	c.currentReadTimeout = t
+}
+
+func (c *Conn) ResetReadTimeout() {
+	c.currentReadTimeout = c.Options.IdleReadTimeout
 }
 
 // tears down connections resources

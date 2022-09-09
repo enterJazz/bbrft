@@ -572,6 +572,9 @@ func (c *Conn) handleClientStream(s *stream) {
 		return
 	}
 
+	// decrease connection timeout of BTP layer
+	c.conn.SetReadTimeout(c.options.activeStreamTimeout)
+
 	// FIXME: Add decompression
 	// TODO: Start waiting for Data packets
 	for {
@@ -586,6 +589,7 @@ func (c *Conn) handleClientStream(s *stream) {
 
 		switch m := msg.(type) {
 		case *messages.Data:
+			c.conn.SetReadTimeout(c.options.activeStreamTimeout)
 			// (optionally) decompress the data
 			data := m.Data
 			dLen := len(m.Data)

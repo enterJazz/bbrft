@@ -154,6 +154,17 @@ func (ls *Listener) doServerHandshake() (c *Conn, err error) {
 	if err != nil {
 		return nil, err
 	}
+	//  transmit initial packet 3 times
+	// since congestion no lost packet tracking is performed before
+	// connection migration was completed
+	_, err = ls.conn.WriteToUDP(buf, raddr)
+	if err != nil {
+		return nil, err
+	}
+	_, err = ls.conn.WriteToUDP(buf, raddr)
+	if err != nil {
+		return nil, err
+	}
 
 	// start run loop
 	err = c.start()

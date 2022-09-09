@@ -101,7 +101,7 @@ func (c *Conn) CloseStream(
 		delete(c.streams, s.id)
 	}
 
-	// TODO: Probably shutdown the client if this was the last active stream
+	allFinished := len(c.streams) == 0
 
 	c.streamsMu.Unlock()
 
@@ -122,6 +122,13 @@ func (c *Conn) CloseStream(
 	if sendClosePacket {
 		c.l.Debug("sending close packet to peer", zap.String("reason", r.String()))
 		c.sendClosePacket(s.id, r)
+	}
+
+	// reset BTP read timeout to normal after all streams are closed
+	// close BRFT client after all streams finished
+	if allFinished {
+		c.conn.ResetReadTimeout()
+		c.Close()
 	}
 }
 
