@@ -2,6 +2,12 @@
 - write a readme
 - improve the comments
 
+@robert
+- close btp
+- cli extra files
+- fix metadatareq
+- maybe README
+
 ## BRFT
 - Server must honor the offset set if it is a retransmit 
 - graceful shutdown of connections (michi)
@@ -29,6 +35,7 @@
 ## MetaData
 - Do we allow recursive directories on the server?
     - not defined in specs -> no
+- wait for 255 following values @robert
 
 ### Nice to haves
 - add a maximum number of streams per connection/peer
@@ -37,6 +44,8 @@
 
 ## CLI
 - add cli support for enabling/disabling compression
+- add cli support for multiple files (in devel branch) @robert
+- add logger customization
 
 # Notes
 - not so nice that we can not link a FileReq & FileResp, but have to rely on the order that responses are sent

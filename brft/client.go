@@ -23,8 +23,6 @@ const (
 	serverAddrStr = "127.0.0.1:1337"
 )
 
-type FileName = string
-
 func Dial(
 	l *zap.Logger,
 	addr string, // server address
@@ -117,6 +115,7 @@ func (c *Conn) ListFileMetaData(
 
 	// TODO: handle extended
 	// wait for response
+	// TODO: if resp more than 255 items: loop @robert; also add some test
 	resp := <-req_ref.resp_chan
 	if resp.err != nil {
 		return nil, resp.err
@@ -125,14 +124,14 @@ func (c *Conn) ListFileMetaData(
 	return &resp.resp, nil
 }
 
-func (c *Conn) DownloadFiles(fileNames []FileName) (map[FileName]*DownloadInfo, error) {
+func (c *Conn) DownloadFiles(fileNames []log.FileName) (map[log.FileName]*log.DownloadInfo, error) {
 	if len(fileNames) == 0 {
 		return nil, errors.New("no files give")
 	}
 
 	g := new(errgroup.Group)
 	mu := sync.Mutex{}
-	infos := make(map[FileName]*DownloadInfo, len(fileNames))
+	infos := make(map[log.FileName]*log.DownloadInfo, len(fileNames))
 	for _, f := range fileNames {
 		f := f // https://golang.org/doc/faq#closures_and_goroutines
 		g.Go(func() error {
@@ -152,18 +151,11 @@ func (c *Conn) DownloadFiles(fileNames []FileName) (map[FileName]*DownloadInfo, 
 	return infos, g.Wait()
 }
 
-type DownloadInfo struct {
-	progChan    <-chan uint64
-	totalSize   uint64
-	startOffset uint64
-	checksum    []byte
-}
-
 // DownloadFile starts a donwload on the provided BRFT connection
 //
 func (c *Conn) DownloadFile(
 	fileName string,
-) (info *DownloadInfo, err error) {
+) (info *log.DownloadInfo, err error) {
 	l := c.l.With(zap.String("filename", fileName))
 
 	if !c.isClient {
@@ -286,11 +278,11 @@ func (c *Conn) DownloadFile(
 	}
 	l.Info("stream started")
 
-	return &DownloadInfo{
-		progChan:    s.progress,
-		totalSize:   resp.FileSize,
-		startOffset: s.offset,
-		checksum:    s.requestedChecksum,
+	return &log.DownloadInfo{
+		ProgChan:    s.progress,
+		TotalSize:   resp.FileSize,
+		StartOffset: s.offset,
+		Checksum:    s.requestedChecksum,
 	}, nil
 }
 

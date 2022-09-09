@@ -81,11 +81,13 @@ func runClient(args *cli.Args) {
 	switch cArgs.Command {
 	case cli.FileRequest:
 		fmt.Println("starting download")
-		if prog, err := c.DownloadFile(cArgs.FileName); err != nil {
+		prog, err := c.DownloadFile(cArgs.FileName)
+		if err != nil {
 			cliLog.Fatal("failed to download file", zap.Error(err))
 		} else {
-			brft.LogProgress(cliLog, cArgs.FileName, prog)
+			log.LogProgress(cliLog, cArgs.FileName, prog)
 		}
+		log.LogProgress(cliLog, cArgs.FileName, prog)
 	case cli.MetaDataRequest:
 		resp, err := c.ListFileMetaData(cArgs.FileName)
 		if err != nil {
