@@ -236,9 +236,8 @@ func (f *File) StripChecksum() error {
 		return err
 	}
 
-	// TODO: FIXME:
-	// write the remainder of the file to a temporary file
-	tmpFile, err := os.CreateTemp("../test/downloads/", "*.brft")
+	// write temporary file next to the current file
+	tmpFile, err := os.CreateTemp(f.basePath, "*.brft")
 	if err != nil {
 		return err
 	}
