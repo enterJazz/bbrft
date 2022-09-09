@@ -413,8 +413,8 @@ func (c *Conn) handleClientStream(s *stream) {
 
 	// update the stream
 	s.l = s.l.With(
-		zap.String("remote_addr", c.conn.LocalAddr().String()),
-		zap.String("local_addr", c.conn.RemoteAddr().String()),
+		zap.String("remote_addr", c.conn.RemoteAddr().String()),
+		zap.String("local_addr", c.conn.LocalAddr().String()),
 		zap.Bool("client_conn", true),
 	)
 

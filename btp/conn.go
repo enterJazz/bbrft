@@ -225,8 +225,10 @@ func newConn(conn *net.UDPConn, options ConnOptions, l *zap.Logger) *Conn {
 		conn:    conn,
 		Options: &options,
 		buf:     make([]byte, options.ReadBufferCap),
-		logger: l.Named("conn").With(zap.String("ip",
-			conn.LocalAddr().String())),
+		logger: l.Named("conn").With(
+			zap.String("local", conn.LocalAddr().String()),
+			zap.String("remote", conn.RemoteAddr().String()),
+		),
 		inflightPackets: make(map[PacketNumber]*packet),
 		openChan:        make(chan error),
 		closeChan:       make(chan error),
@@ -299,7 +301,7 @@ func (c *Conn) transmit(msg messages.Codable) (n int, err error) {
 	}
 
 	n, err = c.conn.Write(buf)
-	l.Debug("sending", FHeaderMessageTypeString(msg.GetHeader().MessageType), zap.Uint16("seq_nr", msg.GetHeader().SeqNr), zap.String("raddr", c.conn.RemoteAddr().String()), zap.Int("len", n))
+	l.Debug("sending", FHeaderMessageTypeString(msg.GetHeader().MessageType), zap.Uint16("seq_nr", msg.GetHeader().SeqNr), zap.Int("len", n))
 
 	if err != nil {
 		return

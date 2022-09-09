@@ -39,7 +39,7 @@ func Listen(options ConnOptions, laddr *net.UDPAddr, logger *zap.Logger) (l *Lis
 		conn:    conn,
 		options: &options,
 		laddr:   laddr,
-		logger:  logger.Named("listener").With(zap.String("ip", conn.LocalAddr().String())),
+		logger:  logger.Named("listener"),
 	}, nil
 }
 
