@@ -163,8 +163,10 @@ func ParseArgs() (*Args, error) {
 									if len(checksum) != common.ChecksumSize {
 										return fmt.Errorf("error parsing CHECKSUM: given checksum is invalid (not of length %v) or not in base64", inputChecksumLen)
 									}
+									cArgs.DownloadFiles[downloadFile] = checksum
+								} else {
+									cArgs.DownloadFiles[downloadFile] = checksum
 								}
-								cArgs.DownloadFiles[downloadFile] = checksum
 							}
 
 							cArgs.DownloadDir = cCtx.Args().Get(cCtx.Args().Len() - 2)
