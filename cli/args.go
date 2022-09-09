@@ -208,7 +208,7 @@ func ParseArgs() (*Args, error) {
 	}
 
 	if optionArgs == nil {
-		if len(os.Args) >= 2 && (os.Args[len(os.Args)-1] == "help" || os.Args[len(os.Args)-1] == "h") {
+		if len(os.Args) >= 2 && (os.Args[len(os.Args)-1] == "help" || os.Args[len(os.Args)-1] == "h" || os.Args[len(os.Args)-1] == "--help" || os.Args[len(os.Args)-1] == "-h") {
 			return nil, HelpError
 		}
 		return nil, errors.New("error parsing args: given command unknown")
