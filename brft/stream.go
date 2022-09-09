@@ -23,9 +23,13 @@ type stream struct {
 
 	// progress channel transmitting the percentage of the overall progress.
 	// Will beclose when the transfer is complete / canceled
-	totalSize        uint64
+	totalSize uint64
+	// total data bytes transmiited over stream (raw bytes received including compression)
 	totalTransmitted uint64
-	progress         chan float32
+	// total number of decoded (if compression is enabled) bytes
+	// if no compression enabled equals totalTransmitted
+	totalPayloadTransmitted uint64
+	progress                chan uint64
 
 	// compression
 	comp      compression.Compressor
@@ -37,6 +41,39 @@ type stream struct {
 
 	// handle incomming and outgoing messages
 	in chan messages.BRFTMessage
+
+	// if set method will be called when file resp is received from server
+	onFileResp func(resp *messages.FileResp, err error)
+}
+
+func (s *stream) updateProgress(lenTransmitted int, lenDecoded int) {
+	s.totalTransmitted += uint64(lenTransmitted)
+	s.totalPayloadTransmitted += uint64(lenDecoded)
+
+	if s.totalTransmitted > s.totalSize {
+		s.l.Warn("progress is beyound file size",
+			zap.Uint64("len_advertised", s.totalSize),
+			zap.Uint64("len_received", s.totalTransmitted),
+		)
+		// TODO: should we close the stream?
+	}
+
+	// try to send the current progress
+	select {
+	case s.progress <- s.totalPayloadTransmitted:
+	default:
+		// try to read the first value and append the new one
+		select {
+		case <-s.progress:
+			s.l.Warn("dropped progress entry")
+			select {
+			case s.progress <- s.totalPayloadTransmitted:
+			default:
+			}
+		default:
+		}
+	}
+
 }
 
 // TODO: maybe simply make this the close on the stream

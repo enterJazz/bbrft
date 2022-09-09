@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"math"
 	"net"
 	"strconv"
 	"sync"
@@ -23,6 +22,8 @@ import (
 const (
 	serverAddrStr = "127.0.0.1:1337"
 )
+
+type FileName = string
 
 func Dial(
 	l *zap.Logger,
@@ -53,7 +54,12 @@ func Dial(
 		return nil, fmt.Errorf("unable to resolve server address: %w", err)
 	}
 
-	c.conn, err = btp.Dial(c.options.btpOptions, nil, raddr, l)
+	btpLogger := l
+	if c.options.BtpLogger != nil {
+		btpLogger = c.options.BtpLogger
+	}
+
+	c.conn, err = btp.Dial(c.options.BtpOptions, nil, raddr, btpLogger)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create connection: %w", err)
 	}
@@ -119,52 +125,52 @@ func (c *Conn) ListFileMetaData(
 	return &resp.resp, nil
 }
 
-func (c *Conn) DownloadFiles(fileNames []string) (map[string]<-chan float32, error) {
+func (c *Conn) DownloadFiles(fileNames []FileName) (map[FileName]*DownloadInfo, error) {
 	if len(fileNames) == 0 {
 		return nil, errors.New("no files give")
 	}
 
 	g := new(errgroup.Group)
 	mu := sync.Mutex{}
-	progs := make(map[string]<-chan float32, len(fileNames))
+	infos := make(map[FileName]*DownloadInfo, len(fileNames))
 	for _, f := range fileNames {
 		f := f // https://golang.org/doc/faq#closures_and_goroutines
 		g.Go(func() error {
-			prog, err := c.DownloadFile(f)
+			info, err := c.DownloadFile(f)
 			if err != nil {
 				return err
 			}
 
 			mu.Lock()
-			progs[f] = prog
+			infos[f] = info
 			mu.Unlock()
 
 			return nil
 		})
 	}
 
-	return progs, g.Wait()
+	return infos, g.Wait()
 }
 
+type DownloadInfo struct {
+	progChan    <-chan uint64
+	totalSize   uint64
+	startOffset uint64
+	checksum    []byte
+}
+
+// DownloadFile starts a donwload on the provided BRFT connection
+//
 func (c *Conn) DownloadFile(
 	fileName string,
-) (<-chan float32, error) {
+) (info *DownloadInfo, err error) {
+	l := c.l.With(zap.String("filename", fileName))
+
 	if !c.isClient {
 		return nil, ErrExpectedClientConnection
 	}
 
-	c.l.Info("initiating new dowload")
-
-	// TODO: See if this is a resumption (maybe make some kind of dialoge)
-	// resumption := false
-	// if resumption {
-	// 	req.Flags = append(req.Flags, messages.FileReqFlagResumption)
-	// 	req.Checksum = make([]byte, common.ChecksumSize)
-
-	// 	var offset uint64 = 0
-	// 	s.offset = offset
-	// 	s.isResumption = true
-	// }
+	l.Info("initiating new dowload")
 
 	// create a new request
 	sid := c.newStreamID()
@@ -184,13 +190,42 @@ func (c *Conn) DownloadFile(
 			zap.String("file_name", fileName),
 			zap.Uint16("stream_id", uint16(sid)),
 		),
-		id:                sid,
-		fileName:          fileName,
-		progress:          make(chan float32, 100),
+		id:       sid,
+		fileName: fileName,
+		// channel that returns the current progress of stream in decoded bytes
+		progress:          make(chan uint64, 100),
 		requestedChecksum: req.Checksum,
-		//isResumption: , TODO: set
-		//offset: , TODO: set
-		in: make(chan messages.BRFTMessage, 50),
+		in:                make(chan messages.BRFTMessage, 50),
+	}
+
+	// check if file already exists for resumption
+	clientFile, err := NewFile(c.l, fileName, c.basePath, nil)
+
+	if err != nil {
+
+		// if file has no checksum assume its not a BRFT file -> some other file exists
+		if errors.Is(err, ErrInvalidChecksum) {
+			return nil, fmt.Errorf("file already exists")
+		}
+
+		l.Debug("no existing file found", zap.Error(err))
+	}
+
+	// prepare resumption if local file found
+	if clientFile != nil {
+		l.Debug("found previous download progress, resuming", zap.Binary("checksum", clientFile.checksum), zap.Uint64("size", clientFile.Size()))
+
+		// prepare request to remote
+		req.Flags = append(req.Flags, messages.FileReqFlagResumption)
+		req.Checksum = clientFile.checksum
+
+		// update local stream offsets
+		s.offset = clientFile.Size()
+		// add already decoded filesize to transmitted counter
+		s.totalPayloadTransmitted = clientFile.Size()
+		s.isResumption = true
+
+		clientFile.Close()
 	}
 
 	// handle compression
@@ -209,10 +244,12 @@ func (c *Conn) DownloadFile(
 		return nil, fmt.Errorf("unable to encode FileRequest: %w", err)
 	}
 
-	s.l.Debug("sending FileRequest",
-		zap.String("packet", spew.Sdump("\n", req)),
-		zap.String("packet_encoded", spew.Sdump("\n", data)),
-	)
+	if DEBUG_PACKET_CONTENT {
+		s.l.Debug("sending FileRequest",
+			zap.String("packet", spew.Sdump("\n", req)),
+			zap.String("packet_encoded", spew.Sdump("\n", data)),
+		)
+	}
 
 	// write the encoded message
 	_, err = c.conn.Write(data)
@@ -225,10 +262,36 @@ func (c *Conn) DownloadFile(
 	c.streams[s.id] = s
 	c.streamsMu.Unlock()
 
+	// wait for file response
+	var (
+		respWg    sync.WaitGroup
+		resp      *messages.FileResp
+		streamErr error
+	)
+	s.onFileResp = func(r *messages.FileResp, err error) {
+		respWg.Done()
+
+		resp = r
+		streamErr = err
+	}
+
+	respWg.Add(1)
 	// start handling of the stream
 	go c.handleClientStream(s)
 
-	return s.progress, nil
+	l.Info("waiting for stream beginning")
+	respWg.Wait()
+	if streamErr != nil {
+		return nil, err
+	}
+	l.Info("stream started")
+
+	return &DownloadInfo{
+		progChan:    s.progress,
+		totalSize:   resp.FileSize,
+		startOffset: s.offset,
+		checksum:    s.requestedChecksum,
+	}, nil
 }
 
 // NOTE: This function can only run in a single thread, since we always need to
@@ -377,10 +440,16 @@ func (c *Conn) handleClientStream(s *stream) {
 	switch v := msg.(type) {
 	case *messages.FileResp:
 		resp = v
+		if s.onFileResp != nil {
+			s.onFileResp(resp, nil)
+		}
 	case *messages.Close:
 		s.l.Warn("received Close packet",
 			zap.String("reason", v.Reason.String()),
 		)
+		if s.onFileResp != nil {
+			s.onFileResp(nil, errors.New("stream closed"))
+		}
 		c.CloseStream(s, false, 0)
 		return
 	default:
@@ -492,11 +561,15 @@ func (c *Conn) handleClientStream(s *stream) {
 		return
 	}
 
-	s.l.Debug("sending StartTransmission",
-		zap.String("file_response", spew.Sdump("\n", resp)),
-		zap.String("packet", spew.Sdump("\n", st)),
-		zap.String("packet_encoded", spew.Sdump("\n", data)),
-	)
+	if DEBUG_PACKET_CONTENT {
+		s.l.Debug("sending StartTransmission",
+			zap.String("file_response", spew.Sdump("\n", resp)),
+			zap.String("packet", spew.Sdump("\n", st)),
+			zap.String("packet_encoded", spew.Sdump("\n", data)),
+		)
+	} else {
+		s.l.Debug("sending StartTransmission")
+	}
 
 	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
@@ -536,6 +609,7 @@ func (c *Conn) handleClientStream(s *stream) {
 					return
 				}
 			}
+			decodedLen := len(data)
 
 			n, err := s.f.Write(data)
 			if err != nil {
@@ -556,32 +630,7 @@ func (c *Conn) handleClientStream(s *stream) {
 				return
 			}
 
-			s.totalTransmitted += uint64(dLen)
-
-			if s.totalTransmitted > s.totalSize {
-				s.l.Warn("already received more data than advertised",
-					zap.Uint64("len_advertised", s.totalSize),
-					zap.Uint64("len_received", s.totalTransmitted),
-				)
-				// TODO: should we close the stream?
-			}
-
-			// try to send the current progress
-			prog := float32(math.Min(1.0, (float64(s.totalTransmitted) / float64(s.totalSize))))
-			select {
-			case s.progress <- prog:
-			default:
-				// try to read the first value and append the new one
-				select {
-				case <-s.progress:
-					s.l.Warn("dropped progress entry")
-					select {
-					case s.progress <- prog:
-					default:
-					}
-				default:
-				}
-			}
+			s.updateProgress(dLen, decodedLen)
 
 		case *messages.Close:
 			// clean up the stream after finishing the file

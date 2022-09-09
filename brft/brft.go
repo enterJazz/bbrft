@@ -1,6 +1,7 @@
 package brft
 
 import (
+	"fmt"
 	"sync"
 
 	"go.uber.org/zap"
@@ -8,23 +9,30 @@ import (
 
 const minProgressDelta float32 = 0.05
 
-func LogProgress(l *zap.Logger, filename string, ch <-chan float32) {
-	LogMultipleProgresses(l, map[string]<-chan float32{filename: ch})
+func LogProgress(l *zap.Logger, filename string, info *DownloadInfo) {
+	LogMultipleProgresses(l, map[FileName]*DownloadInfo{filename: info})
 }
 
-func LogMultipleProgresses(l *zap.Logger, chs map[string]<-chan float32) {
+func LogMultipleProgresses(l *zap.Logger, infos map[FileName]*DownloadInfo) {
 	wg := sync.WaitGroup{}
-	for filename, ch := range chs {
-		filename, ch := filename, ch // https://golang.org/doc/faq#closures_and_goroutines
+	for filename, info := range infos {
+		filename, ch := filename, info.progChan // https://golang.org/doc/faq#closures_and_goroutines
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			var prevProgress float32 = 0.0
+			var prevProgress uint64 = info.startOffset
+			logStep := uint64(minProgressDelta * float32(info.totalSize))
 			for {
 				if prog, ok := <-ch; ok {
-					//if prog > prevProgress {
-					if prog > prevProgress+minProgressDelta {
-						l.Info("current progress", zap.String("file_name", filename), zap.Float32("progress", prog))
+					if prog > prevProgress+logStep {
+						l.Info("current progress",
+							zap.String("file_name", filename),
+							zap.Uint64("transmitted_bytes", prog),
+							zap.Uint64("total_bytes", info.totalSize),
+							zap.String("progress",
+								fmt.Sprintf("%.2f%%", float32(prog)/float32(info.totalSize)*100),
+							),
+						)
 						prevProgress = prog
 					}
 				} else {

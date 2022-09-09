@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -20,7 +19,13 @@ import (
 	"go.uber.org/zap"
 )
 
-const EMPTY_FILE_NAME string = ""
+const (
+	EMPTY_FILE_NAME string = ""
+
+	// if enabled in combination with debug log level packet contents
+	// will be logged (will drastically impact performance)
+	DEBUG_PACKET_CONTENT = false
+)
 
 type ServerOptions struct {
 	ConnOptions
@@ -51,12 +56,17 @@ func NewServer(
 		opt = &ServerOptions{NewDefaultOptions(l)}
 	}
 
-	laddr, err := net.ResolveUDPAddr(opt.btpOptions.Network, listen_addr)
+	laddr, err := net.ResolveUDPAddr(opt.BtpOptions.Network, listen_addr)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	listener, err := btp.Listen(opt.btpOptions, laddr, l)
+	btpLogger := l
+	if options.BtpLogger != nil {
+		btpLogger = opt.BtpLogger
+	}
+
+	listener, err := btp.Listen(opt.BtpOptions, laddr, btpLogger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -161,7 +171,7 @@ func (c *Conn) handleServerConnection() {
 					zap.String("file_name", msg.FileName),
 				),
 				id:        msg.StreamID,
-				progress:  make(chan float32),
+				progress:  make(chan uint64),
 				chunkSize: messages.ComputeChunkSize(c.options.chunkSizeFactor),
 				in:        make(chan messages.BRFTMessage, 50),
 			}
@@ -196,6 +206,23 @@ func (c *Conn) handleServerConnection() {
 
 		case *messages.StartTransmission:
 			s := c.getStream(msg.StreamID)
+
+			// ensure startTransmission checksum matches stream checksum
+			// if checksum invalid abort
+			if !bytes.Equal(s.f.checksum, msg.Checksum) {
+				c.sendClosePacket(msg.StreamID, messages.CloseReasonChecksumInvalid)
+				continue
+			}
+
+			// validate incoming offset
+			if msg.Offset != 0 && msg.Offset >= uint64(s.f.stat.Size()) {
+				c.sendClosePacket(msg.StreamID, messages.CloseReasonInvalidOffset)
+				continue
+			} else {
+				s.l.Info("resuming download", zap.Uint64("offset", msg.Offset))
+			}
+			s.offset = msg.Offset
+
 			if s != nil {
 				s.in <- msg
 			} else {
@@ -430,11 +457,15 @@ func (c *Conn) handleServerStream(s *stream) {
 		return
 	}
 
-	s.l.Debug("sending FileResponse",
-		zap.String("file_request", spew.Sdump("\n", req)),
-		zap.String("packet", spew.Sdump("\n", resp)),
-		zap.String("packet_encoded", spew.Sdump("\n", data)),
-	)
+	if DEBUG_PACKET_CONTENT {
+		s.l.Debug("sending FileResponse",
+			zap.String("file_request", spew.Sdump("\n", req)),
+			zap.String("packet", spew.Sdump("\n", resp)),
+			zap.String("packet_encoded", spew.Sdump("\n", data)),
+		)
+	} else {
+		s.l.Debug("sending FileResponse")
+	}
 
 	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
@@ -493,9 +524,16 @@ func (c *Conn) handleServerStream(s *stream) {
 		return
 	}
 
-	s.l.Debug("validated StartTransmission packet",
-		zap.String("start_transmission", spew.Sdump("\n", st)),
-	)
+	s.f.SeekOffset(st.Offset)
+	s.l.Debug("seeking offset in file", zap.Uint64("offset", st.Offset))
+
+	if DEBUG_PACKET_CONTENT {
+		s.l.Debug("validated StartTransmission packet",
+			zap.String("start_transmission", spew.Sdump("\n", st)),
+		)
+	} else {
+		s.l.Debug("validated StartTransmission packet")
+	}
 
 	// start sending data from the file
 	for {
@@ -547,10 +585,12 @@ func (c *Conn) handleServerStream(s *stream) {
 			return
 		}
 
-		s.l.Debug("sending Data packet",
-			zap.String("packet", spew.Sdump("\n", d)),
-			// TODO: re-enable zap.String("packet_encoded", spew.Sdump("\n", data)),
-		)
+		if DEBUG_PACKET_CONTENT {
+			s.l.Debug("sending Data packet",
+				zap.String("packet", spew.Sdump("\n", d)),
+				// TODO: re-enable zap.String("packet_encoded", spew.Sdump("\n", data)),
+			)
+		}
 
 		// TODO: maybe introduce a high timeout (~ 10s)
 		// send the data to the sender routing
@@ -562,32 +602,7 @@ func (c *Conn) handleServerStream(s *stream) {
 		}
 
 		// TODO: Somehow we send more data than we initially advertised
-		s.totalTransmitted += uint64(dLen)
-		if s.totalTransmitted > s.totalSize {
-			s.l.Error("already sent more data than advertised",
-				zap.Uint64("len_advertised", s.totalSize),
-				zap.Uint64("len_sent", s.totalTransmitted),
-			)
-			// TODO: should we close the stream?
-		}
-
-		// TODO: Actually this is not really needed on the server. Or we'd have
-		//		to create a special function to retrieve the channel
-		// try to send the current progress
-		prog := float32(math.Min(1.0, (float64(s.totalTransmitted) / float64(s.totalSize))))
-		select {
-		case s.progress <- prog:
-		default:
-			// try to read the first value and append the new one
-			select {
-			case <-s.progress:
-			default:
-				select {
-				case s.progress <- prog:
-				default:
-				}
-			}
-		}
+		s.updateProgress(len(d.Data), dLen)
 
 		if lastPacket {
 			// sent last packet
@@ -720,11 +735,15 @@ func (c *Conn) handleMetaDataReq(metaReq messages.MetaReq) {
 			continue
 		}
 
-		c.l.Debug("sending MetaDataResponses",
-			zap.String("metadata_responses", spew.Sdump("\n", metaResps)),
-			zap.String("metadata_response", spew.Sdump("\n", metaResp)),
-			zap.String("packet_encoded", spew.Sdump("\n", data)),
-		)
+		if DEBUG_PACKET_CONTENT {
+			c.l.Debug("sending MetaDataResponses",
+				zap.String("metadata_responses", spew.Sdump("\n", metaResps)),
+				zap.String("metadata_response", spew.Sdump("\n", metaResp)),
+				zap.String("packet_encoded", spew.Sdump("\n", data)),
+			)
+		} else {
+			c.l.Debug("sending MetaDataResponses")
+		}
 
 		// TODO: maybe introduce a high timeout (~ 10s)
 		// send the data to the sender routing

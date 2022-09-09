@@ -115,7 +115,7 @@ func TestMultiTransfer(t *testing.T) {
 	testFiles := []string{"test-1.jpg", "test-2.jpg", "test-3.jpg", "test-4.jpg"}
 
 	l, c, close := setupTest(t,
-		[]log.Option{log.WithProd(false)},
+		[]log.Option{log.WithProd(true)},
 		[]log.Option{log.WithProd(true)},
 	)
 	defer close()

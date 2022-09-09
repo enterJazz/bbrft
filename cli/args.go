@@ -7,7 +7,6 @@ import (
 	"strconv"
 
 	"github.com/urfave/cli/v2"
-	"go.uber.org/zap"
 )
 
 type OperationMode int
@@ -19,7 +18,6 @@ const (
 
 type Args struct {
 	TestMode      bool
-	L             *zap.Logger
 	OperationArgs OperationArgs
 }
 
@@ -30,7 +28,6 @@ type OperationArgs interface {
 func ParseArgs() *Args {
 	var (
 		testMode   bool
-		l          *zap.Logger
 		optionArgs OperationArgs
 	)
 
@@ -39,27 +36,16 @@ func ParseArgs() *Args {
 		Usage: "serve or fetch remote files",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
-				Name:    "test-mode",
-				Aliases: []string{"t"},
-				Usage:   "enables test mode",
+				Name:    "debug",
+				Aliases: []string{"d"},
+				Usage:   "enables debug/test mode",
 			},
 		},
 		Action: func(cCtx *cli.Context) error {
 			if cCtx.NArg() == 0 {
 				return errors.New("no Command specified; use Command `help` to view available commands")
 			}
-			testMode = cCtx.Bool("test-mode")
-			var logErr error
-			if testMode {
-				l, logErr = zap.NewDevelopment()
-				l.Warn("Development Mode Active")
-
-			} else {
-				l, logErr = zap.NewProduction()
-			}
-			if logErr != nil {
-				return logErr
-			}
+			testMode = cCtx.Bool("debug")
 			return nil
 		},
 		Commands: []*cli.Command{
@@ -147,7 +133,6 @@ func ParseArgs() *Args {
 
 	args := Args{
 		TestMode:      testMode,
-		L:             l,
 		OperationArgs: optionArgs,
 	}
 

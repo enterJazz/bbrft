@@ -15,7 +15,8 @@ type ConnOptions struct {
 
 	chunkSizeFactor uint8
 
-	btpOptions btp.ConnOptions
+	BtpOptions btp.ConnOptions
+	BtpLogger  *zap.Logger
 }
 
 func NewDefaultOptions(l *zap.Logger) ConnOptions {
@@ -26,7 +27,7 @@ func NewDefaultOptions(l *zap.Logger) ConnOptions {
 
 		chunkSizeFactor: 0,
 
-		btpOptions: *btp.NewDefaultOptions(l),
+		BtpOptions: *btp.NewDefaultOptions(l),
 	}
 }
 
