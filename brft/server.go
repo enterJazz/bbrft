@@ -729,7 +729,7 @@ func (c *Conn) handleMetaDataReq(metaReq messages.MetaReq) {
 		// TODO: maybe introduce a high timeout (~ 10s)
 		// send the data to the sender routing
 		select {
-		case c.outData <- data:
+		case c.outCtrl <- data:
 		case <-c.close:
 			// we're only receiving the channel message, so no need to get proactive
 			return

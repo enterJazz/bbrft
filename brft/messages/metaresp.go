@@ -40,7 +40,7 @@ func NewMetaResps(items []*MetaItem) ([]*MetaResp, error) {
 	}
 
 	// split the metaItems into multiple responses
-	for len(items) > MaxMetaItemsNum {
+	for len(items) >= MaxMetaItemsNum {
 		resp = append(resp, &MetaResp{
 			Items:      items[:MaxMetaItemsNum],
 			isExtended: false,
