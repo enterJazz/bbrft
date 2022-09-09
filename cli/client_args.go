@@ -15,6 +15,8 @@ type ClientArgs struct {
 	DownloadDir string
 	// target server address of operation
 	ServerAddr string
+	// disable / enable compression
+	UseCompression bool
 }
 
 func (c *ClientArgs) GetOperationMode() OperationMode {

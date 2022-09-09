@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"gitlab.lrz.de/bbrft/brft"
+	"gitlab.lrz.de/bbrft/brft/compression"
 	"gitlab.lrz.de/bbrft/cli"
 	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
@@ -71,7 +72,7 @@ func runClient(args *cli.Args) {
 
 	cArgs := args.OperationArgs.(*cli.ClientArgs)
 	// connect to server
-	optD := brft.NewDefaultOptions(brftLog)
+	optD := brft.NewDefaultOptions(brftLog, cArgs.UseCompression)
 	optD.BtpLogger = btpLog
 
 	c, err := brft.Dial(brftLog, cArgs.ServerAddr, cArgs.DownloadDir, &optD)
@@ -155,7 +156,7 @@ func runServer(args *cli.Args) {
 	// TODO: should this be parameterized? or set by env var?
 	lAddr := "0.0.0.0:" + strconv.Itoa(sArgs.Port)
 
-	opt := &brft.ServerOptions{brft.NewDefaultOptions(brftLog)}
+	opt := &brft.ServerOptions{brft.NewDefaultOptions(brftLog, compression.DefaultCompressionEnabled)}
 	opt.BtpLogger = btpLog
 
 	s, _, err := brft.NewServer(brftLog, lAddr, sArgs.ServeDir, opt)
