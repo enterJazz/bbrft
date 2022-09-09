@@ -135,7 +135,12 @@ func (c *Conn) CloseStream(
 	// close BRFT client after all streams finished
 	if allFinished {
 		c.conn.ResetReadTimeout()
+
+		// FIXME: The client should probably close the connection if no more are active
 		// IDEA: close connections when no more open streams
+		if c.isClient {
+			c.Close()
+		}
 	}
 }
 

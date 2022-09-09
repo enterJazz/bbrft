@@ -56,10 +56,6 @@ func setupTest(t *testing.T,
 		if err != nil {
 			l.Error("unable to close server", zap.Error(err))
 		}
-		err = c.Close()
-		if err != nil {
-			l.Error("unable to close client", zap.Error(err))
-		}
 	}
 }
 
