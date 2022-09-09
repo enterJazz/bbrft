@@ -108,7 +108,7 @@ func TestTransfer(t *testing.T) {
 		t.Error(err)
 	}
 
-	log.LogProgress(l, testFile, prog)
+	LogProgress(l, testFile, prog)
 }
 
 // TODO: Create separate tests for different chunk sizes
@@ -126,7 +126,7 @@ func TestBigTransfer(t *testing.T) {
 		t.Error(err)
 	}
 
-	log.LogProgress(l, testFile, prog)
+	LogProgress(l, testFile, prog)
 }
 
 func TestMultiTransfer(t *testing.T) {
@@ -152,7 +152,7 @@ func TestMultiTransfer(t *testing.T) {
 		t.Error(err)
 	}
 
-	log.LogMultipleProgresses(l, progs)
+	LogMultipleProgresses(l, progs)
 }
 
 func TestConcurrentDownloadAndMetaDataRequest(t *testing.T) {
@@ -201,7 +201,7 @@ func TestConcurrentDownloadAndMetaDataRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	log.LogMultipleProgresses(l, progs)
+	LogMultipleProgresses(l, progs)
 }
 
 func TestNonExistingFile(t *testing.T) {
@@ -218,7 +218,7 @@ func TestNonExistingFile(t *testing.T) {
 		t.Error(err)
 	}
 
-	log.LogProgress(l, testFile, prog)
+	LogProgress(l, testFile, prog)
 }
 
 // func TestDownloadResumption(t *testing.T) {

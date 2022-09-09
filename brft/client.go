@@ -13,7 +13,6 @@ import (
 	"gitlab.lrz.de/bbrft/brft/compression"
 	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/btp"
-	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -23,6 +22,12 @@ const (
 	serverAddrStr = "127.0.0.1:1337"
 )
 
+type DownloadInfo struct {
+	ProgChan    <-chan Progress
+	StartOffset uint64
+	Checksum    []byte
+}
+
 func Dial(
 	l *zap.Logger,
 	addr string, // server address
@@ -30,7 +35,7 @@ func Dial(
 	options *ConnOptions,
 ) (*Conn, error) {
 	c := &Conn{
-		l:        l.With(log.FPeer("brft_client")),
+		l:        l.With(FPeer("brft_client")),
 		basePath: downloadDir, // TODO: Make sure that it actually exists / create it
 		isClient: true,
 		streams:  make(map[messages.StreamID]*stream, 100),
@@ -124,14 +129,14 @@ func (c *Conn) ListFileMetaData(
 	return &resp.resp, nil
 }
 
-func (c *Conn) DownloadFiles(fNameChecksumMap map[string][]byte) (map[log.FileName]*log.DownloadInfo, error) {
+func (c *Conn) DownloadFiles(fNameChecksumMap map[string][]byte) (map[string]*DownloadInfo, error) {
 	if len(fNameChecksumMap) == 0 {
 		return nil, errors.New("no files give")
 	}
 
 	g := new(errgroup.Group)
 	mu := sync.Mutex{}
-	infos := make(map[log.FileName]*log.DownloadInfo, len(fNameChecksumMap))
+	infos := make(map[string]*DownloadInfo, len(fNameChecksumMap))
 	for f, cs := range fNameChecksumMap {
 		f := f // https://golang.org/doc/faq#closures_and_goroutines
 		cs := cs
@@ -156,7 +161,7 @@ func (c *Conn) DownloadFiles(fNameChecksumMap map[string][]byte) (map[log.FileNa
 func (c *Conn) DownloadFile(
 	fileName string,
 	checksum []byte,
-) (info *log.DownloadInfo, err error) {
+) (info *DownloadInfo, err error) {
 	l := c.l.With(zap.String("filename", fileName))
 
 	if !c.isClient {
@@ -191,16 +196,14 @@ func (c *Conn) DownloadFile(
 		id:       sid,
 		fileName: fileName,
 		// channel that returns the current progress of stream in decoded bytes
-		progress:          make(chan uint64, 100),
+		progress:          make(chan Progress, 100),
 		requestedChecksum: req.Checksum,
 		in:                make(chan messages.BRFTMessage, 50),
 	}
 
 	// check if file already exists for resumption
 	clientFile, err := NewFile(c.l, fileName, c.basePath, nil)
-
 	if err != nil {
-
 		// if file has no checksum assume its not a BRFT file -> some other file exists
 		if errors.Is(err, ErrInvalidChecksum) {
 			return nil, fmt.Errorf("file already exists")
@@ -249,10 +252,14 @@ func (c *Conn) DownloadFile(
 		)
 	}
 
-	// write the encoded message
-	_, err = c.conn.Write(data)
-	if err != nil {
-		return nil, fmt.Errorf("unable to encode FileRequest: %w", err)
+	// TODO: maybe introduce a high timeout (~ 10s)
+	// send the data to the sender routing
+	select {
+	case c.outCtrl <- data:
+	case <-c.close:
+		// we're only receiving the channel message, so no need to get proactive
+		c.l.Warn("channel got closed during active MetaDataRequest")
+		return nil, fmt.Errorf("channel closed before MetaDataRequest finished")
 	}
 
 	// add the stream to map of streams
@@ -260,33 +267,13 @@ func (c *Conn) DownloadFile(
 	c.streams[s.id] = s
 	c.streamsMu.Unlock()
 
-	// wait for file response
-	var (
-		respWg    sync.WaitGroup
-		resp      *messages.FileResp
-		streamErr error
-	)
-	s.onFileResp = func(r *messages.FileResp, err error) {
-		respWg.Done()
-
-		resp = r
-		streamErr = err
-	}
-
-	respWg.Add(1)
 	// start handling of the stream
 	go c.handleClientStream(s)
 
-	l.Info("waiting for stream beginning")
-	respWg.Wait()
-	if streamErr != nil {
-		return nil, err
-	}
 	l.Info("stream started")
 
-	return &log.DownloadInfo{
+	return &DownloadInfo{
 		ProgChan:    s.progress,
-		TotalSize:   resp.FileSize,
 		StartOffset: s.offset,
 		Checksum:    s.requestedChecksum,
 	}, nil
@@ -438,16 +425,10 @@ func (c *Conn) handleClientStream(s *stream) {
 	switch v := msg.(type) {
 	case *messages.FileResp:
 		resp = v
-		if s.onFileResp != nil {
-			s.onFileResp(resp, nil)
-		}
 	case *messages.Close:
 		s.l.Warn("received Close packet",
 			zap.String("reason", v.Reason.String()),
 		)
-		if s.onFileResp != nil {
-			s.onFileResp(nil, errors.New("stream closed"))
-		}
 		c.CloseStream(s, false, 0)
 		return
 	default:
@@ -580,6 +561,8 @@ func (c *Conn) handleClientStream(s *stream) {
 
 	// decrease connection timeout of BTP layer
 	c.conn.SetReadTimeout(c.options.activeStreamTimeout)
+
+	s.l.Info("handshake done")
 
 	// FIXME: Add decompression
 	// TODO: Start waiting for Data packets

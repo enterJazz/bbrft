@@ -103,7 +103,7 @@ func runClient(args *cli.Args) {
 			if err != nil {
 				cliLog.Fatal("failed to download file", zap.Error(err))
 			} else {
-				log.LogProgress(cliLog, f, prog)
+				brft.LogProgress(cliLog, f, prog)
 			}
 		} else {
 			progs, err := c.DownloadFiles(cArgs.DownloadFiles)
@@ -111,7 +111,7 @@ func runClient(args *cli.Args) {
 				cliLog.Fatal("failed to download files", zap.Error(err))
 			}
 
-			log.LogMultipleProgresses(cliLog, progs)
+			brft.LogMultipleProgresses(cliLog, progs)
 		}
 	case cli.MetaDataRequest:
 		f, _, err := getSingleKeyValPair(cArgs.DownloadFiles)

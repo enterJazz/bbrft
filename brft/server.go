@@ -15,7 +15,6 @@ import (
 	"gitlab.lrz.de/bbrft/brft/compression"
 	"gitlab.lrz.de/bbrft/brft/messages"
 	"gitlab.lrz.de/bbrft/btp"
-	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
 
@@ -72,7 +71,7 @@ func NewServer(
 	}
 
 	return &Server{
-		l:           l.With(log.FPeer("brft_server")),
+		l:           l.With(FPeer("brft_server")),
 		listener:    listener,
 		basePath:    basePath,
 		listen_addr: laddr,
@@ -171,7 +170,7 @@ func (c *Conn) handleServerConnection() {
 					zap.String("file_name", msg.FileName),
 				),
 				id:        msg.StreamID,
-				progress:  make(chan uint64),
+				progress:  make(chan Progress),
 				chunkSize: messages.ComputeChunkSize(c.options.chunkSizeFactor),
 				in:        make(chan messages.BRFTMessage, 50),
 			}

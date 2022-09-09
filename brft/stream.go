@@ -8,6 +8,13 @@ import (
 	"go.uber.org/zap"
 )
 
+type Progress struct {
+	TotalBytes uint64
+	// TODO: Alternatively, we should create another channel that transmitts all of
+	// the relevant information after the handshake is finished
+	TransmittedBytes uint64
+}
+
 // TODO: Add a close for the stream
 // create a new connection object
 type stream struct {
@@ -29,7 +36,7 @@ type stream struct {
 	// total number of decoded (if compression is enabled) bytes
 	// if no compression enabled equals totalTransmitted
 	totalPayloadTransmitted uint64
-	progress                chan uint64
+	progress                chan Progress
 
 	// compression
 	comp      compression.Compressor
@@ -41,9 +48,6 @@ type stream struct {
 
 	// handle incomming and outgoing messages
 	in chan messages.BRFTMessage
-
-	// if set method will be called when file resp is received from server
-	onFileResp func(resp *messages.FileResp, err error)
 }
 
 func (s *stream) updateProgress(lenTransmitted int, lenDecoded int) {
@@ -59,21 +63,24 @@ func (s *stream) updateProgress(lenTransmitted int, lenDecoded int) {
 	}
 
 	// try to send the current progress
+	prog := Progress{
+		TotalBytes:       s.totalSize,
+		TransmittedBytes: s.totalPayloadTransmitted,
+	}
 	select {
-	case s.progress <- s.totalPayloadTransmitted:
+	case s.progress <- prog:
 	default:
 		// try to read the first value and append the new one
 		select {
 		case <-s.progress:
 			s.l.Warn("dropped progress entry")
 			select {
-			case s.progress <- s.totalPayloadTransmitted:
+			case s.progress <- prog:
 			default:
 			}
 		default:
 		}
 	}
-
 }
 
 // TODO: maybe simply make this the close on the stream

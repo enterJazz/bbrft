@@ -12,7 +12,6 @@ import (
 
 	"gitlab.lrz.de/bbrft/brft/common"
 	shared "gitlab.lrz.de/bbrft/brft/common"
-	"gitlab.lrz.de/bbrft/log"
 	"go.uber.org/zap"
 )
 
@@ -47,7 +46,7 @@ func NewFile(
 	// checksum (optional)
 	checksum []byte,
 ) (*File, error) {
-	l = l.With(log.FComponent("file"))
+	l = l.With(FComponent("file"))
 	var (
 		f   *os.File
 		err error
