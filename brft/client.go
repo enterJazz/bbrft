@@ -67,25 +67,37 @@ func Dial(
 // should be performed single threaded as waits for metaDataResp on connection in lock-step fashion
 func (c *Conn) ListFileMetaData(
 	fileName string,
-) error {
+) (*messages.MetaResp, error) {
 	if !c.isClient {
-		return ErrExpectedClientConnection
+		return nil, ErrExpectedClientConnection
 	}
 
 	l := c.l.With(zap.String("filename", fileName))
 
-	l.Info("fetching metadata")
+	l.Debug("fetching metadata")
 
 	// create the request
 	metaReq, err := messages.NewMetaReq(fileName)
 	if err != nil {
-		return fmt.Errorf("failed to create MetaDataReq: %w", err)
+		return nil, fmt.Errorf("failed to create MetaDataReq: %w", err)
 	}
 
 	data, err := metaReq.Encode(c.l)
 	if err != nil {
-		return fmt.Errorf("unable to encode MetaDataReq: %w", err)
+		return nil, fmt.Errorf("unable to encode MetaDataReq: %w", err)
 	}
+
+	req_ref := metaDataRequestRef{
+		resp_chan: make(chan metaDataReqRespMsg, 1),
+	}
+
+	// add meta data re
+	c.metaDataRequestMu.Lock()
+	c.metaDataRequests = append(c.metaDataRequests, req_ref)
+	c.metaDataRequestMu.Unlock()
+
+	l.Debug("sent MetaDataRequest")
+	// TODO: maybe remove on send error
 
 	// TODO: maybe introduce a high timeout (~ 10s)
 	// send the data to the sender routing
@@ -94,12 +106,16 @@ func (c *Conn) ListFileMetaData(
 	case <-c.close:
 		// we're only receiving the channel message, so no need to get proactive
 		c.l.Warn("channel got closed during active MetaDataRequest")
-		return nil
+		return nil, fmt.Errorf("channel closed before MetaDataRequest finished")
 	}
 
-	l.Debug("sent MetaDataRequest")
+	// wait for response
+	resp := <-req_ref.resp_chan
+	if resp.err != nil {
+		return nil, resp.err
+	}
 
-	return nil
+	return &resp.resp, nil
 }
 
 func (c *Conn) DownloadFiles(fileNames []string) (map[string]<-chan float32, error) {
@@ -287,9 +303,21 @@ func (c *Conn) handleClientConnection() {
 			}
 
 		case *messages.MetaResp:
-			// TODO: handle the packet and display it somehow
-			c.printMetaResponse(msg)
+			c.metaDataRequestMu.Lock()
+			// find matching request
+			if len(c.metaDataRequests) == 0 {
+				c.l.Warn("received MetaResp without matching request")
+				break
+			}
+			c.metaDataRequests[0].resp_chan <- metaDataReqRespMsg{
+				resp: *msg,
+				err:  nil,
+			}
+			c.metaDataRequests = c.metaDataRequests[1:]
 
+			c.metaDataRequestMu.Unlock()
+
+			// c.printMetaResponse(msg)
 		case *messages.FileReq,
 			*messages.StartTransmission,
 			*messages.MetaReq:
