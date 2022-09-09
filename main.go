@@ -119,7 +119,7 @@ func runClient(args *cli.Args) {
 			cliLog.Fatal("error parsing files", zap.Error(err))
 		}
 
-		resp, err := c.ListFileMetaData(f)
+		resps, err := c.ListFileMetaData(f)
 		if err != nil {
 			cliLog.Fatal("failed to fetch file metadata", zap.Error(err))
 		}
@@ -133,11 +133,13 @@ func runClient(args *cli.Args) {
 			fmt.Printf("file details of %s\n", f)
 			fmt.Println("--------------------------")
 		}
-		for _, item := range resp.Items {
-			if item.FileSize != nil {
-				fmt.Printf("%s %dB %x \n", item.FileName, *item.FileSize, item.Checksum)
-			} else {
-				fmt.Printf("%s\n", item.FileName)
+		for _, resp := range resps {
+			for _, item := range resp.Items {
+				if item.FileSize != nil {
+					fmt.Printf("%s %dB %x \n", item.FileName, *item.FileSize, item.Checksum)
+				} else {
+					fmt.Printf("%s\n", item.FileName)
+				}
 			}
 		}
 	}

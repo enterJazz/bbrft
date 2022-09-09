@@ -76,7 +76,7 @@ func Dial(
 // should be performed single threaded as waits for metaDataResp on connection in lock-step fashion
 func (c *Conn) ListFileMetaData(
 	fileName string,
-) (*messages.MetaResp, error) {
+) ([]*messages.MetaResp, error) {
 	if !c.isClient {
 		return nil, ErrExpectedClientConnection
 	}
@@ -121,12 +121,20 @@ func (c *Conn) ListFileMetaData(
 	// TODO: handle extended
 	// wait for response
 	// TODO: if resp more than 255 items: loop @robert; also add some test
-	resp := <-req_ref.resp_chan
-	if resp.err != nil {
-		return nil, resp.err
+	resps := make([]*messages.MetaResp, 0)
+	for {
+		resp := <-req_ref.resp_chan
+		if resp.err != nil {
+			return nil, resp.err
+		}
+		resps = append(resps, &resp.resp)
+		// check if 255 items; else break loop
+		if len(resp.resp.Items) < messages.MaxMetaItemsNum {
+			break
+		}
 	}
 
-	return &resp.resp, nil
+	return resps, nil
 }
 
 func (c *Conn) DownloadFiles(fNameChecksumMap map[string][]byte) (map[string]*DownloadInfo, error) {
